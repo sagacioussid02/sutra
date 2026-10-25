@@ -1,0 +1,137 @@
+{
+ "memories": [
+  "I get paid on the 15th of every month",
+  "My rent is $1,800 and is due on the 1st",
+  "My savings account is at Ally Bank",
+  "Keep your answers short",
+  "Call me Sid",
+  "I'm vegetarian",
+  "I have two kids",
+  "My car loan is with Toyota Financial",
+  "I review my budget every Sunday evening",
+  "My credit card statement closes on the 20th",
+  "I live in Austin",
+  "Don't round my numbers, I want exact figures",
+  "My emergency fund target is ten thousand dollars",
+  "My daughter is called Meera",
+  "I pay my Visa card on the 25th each month",
+  "My accountant is Ms. Rao",
+  "I want to be debt free by 2028",
+  "My health insurance renews in January",
+  "I prefer the bad news first",
+  "I'm saving for a trip to Japan next spring"
+ ],
+ "queries": [
+  {
+   "query": "when do I get paid?",
+   "expect": 0,
+   "hard": false
+  },
+  {
+   "query": "how much is my rent?",
+   "expect": 1,
+   "hard": false
+  },
+  {
+   "query": "which bank is my savings in",
+   "expect": 2,
+   "hard": false
+  },
+  {
+   "query": "can you give me a short summary",
+   "expect": 3,
+   "hard": false
+  },
+  {
+   "query": "what should you call me",
+   "expect": 4,
+   "hard": false
+  },
+  {
+   "query": "tell me about my car loan",
+   "expect": 7,
+   "hard": false
+  },
+  {
+   "query": "when do I review my budget",
+   "expect": 8,
+   "hard": false
+  },
+  {
+   "query": "when does my credit card statement close",
+   "expect": 9,
+   "hard": false
+  },
+  {
+   "query": "what city do I live in",
+   "expect": 10,
+   "hard": false
+  },
+  {
+   "query": "give me the exact numbers",
+   "expect": 11,
+   "hard": false
+  },
+  {
+   "query": "how big should my emergency fund be",
+   "expect": 12,
+   "hard": false
+  },
+  {
+   "query": "what is my daughter's name",
+   "expect": 13,
+   "hard": false
+  },
+  {
+   "query": "when do I pay my visa",
+   "expect": 14,
+   "hard": false
+  },
+  {
+   "query": "when will I be debt free",
+   "expect": 16,
+   "hard": false
+  },
+  {
+   "query": "when does my insurance renew",
+   "expect": 17,
+   "hard": false
+  },
+  {
+   "query": "tell me the bad news",
+   "expect": 18,
+   "hard": false
+  },
+  {
+   "query": "how is my japan trip fund",
+   "expect": 19,
+   "hard": false
+  },
+  {
+   "query": "suggest a restaurant for dinner",
+   "expect": 5,
+   "hard": true
+  },
+  {
+   "query": "how many children do I have",
+   "expect": 6,
+   "hard": true
+  },
+  {
+   "query": "who does my taxes",
+   "expect": 15,
+   "hard": true
+  },
+  {
+   "query": "what is my landlord's name",
+   "expect": 1,
+   "hard": true
+  }
+ ],
+ "negatives": [
+  "what's the weather in Paris",
+  "tell me a joke",
+  "how do airplanes fly",
+  "what time is it"
+ ]
+}

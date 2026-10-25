@@ -1,0 +1,22 @@
+# Copy this file to tokens.yaml (gitignored) and fill in real values.
+# tokens.yaml is the gateway's only source of trusted users, their bearer
+# tokens, and which tools each may call. gateway_confirm does not need to
+# be listed — every known user id may always call it (it only ever acts on
+# that same user's own pending confirmations).
+#
+# Generate a token with:
+#   go run -exec "openssl rand -hex 32" ./...   # or any 32+ byte random hex string
+
+users:
+  - id: sid
+    token: "REPLACE_WITH_A_LONG_RANDOM_TOKEN"
+    allowed_tools:
+      - twin_chat
+      - twin_list_public_personas
+      - finanxe_get_snapshot
+      - finanxe_list_debts
+      - finanxe_get_calendar
+      - finanxe_list_goals
+      - finanxe_set_debt_funding
+      - finanxe_create_goal
+      - finanxe_add_calendar_event

@@ -1,0 +1,44 @@
+{
+  "sutra_manifest_version": 1,
+  "project": {
+    "name": "finanxe",
+    "description": "Personal finance tracker: debts, goals, calendar, and financial snapshots."
+  },
+  "tools": [
+    {
+      "name": "get_snapshot",
+      "description": "Get the user's current financial snapshot (cash position, income, debt totals, debt-to-income ratio).",
+      "tier_hint": "read-only",
+      "method": "GET",
+      "path": "/api/snapshot",
+      "args": [
+        {"name": "user_id", "type": "string", "required": false, "secret": false, "in": "query"}
+      ],
+      "generic_callable": true
+    },
+    {
+      "name": "list_debts",
+      "description": "List the user's debts and their available funding accounts.",
+      "tier_hint": "read-only",
+      "method": "GET",
+      "path": "/api/debts",
+      "args": [
+        {"name": "user_id", "type": "string", "required": false, "secret": false, "in": "query"}
+      ],
+      "generic_callable": true
+    },
+    {
+      "name": "set_debt_funding",
+      "description": "Redirect which account a debt is paid from, by debt name and account description.",
+      "tier_hint": "confirm-first",
+      "method": "POST",
+      "path": "/api/debt/funding",
+      "args": [
+        {"name": "id", "type": "string", "required": true, "secret": false, "in": "body"},
+        {"name": "funding_account", "type": "string", "required": true, "secret": false, "in": "body"}
+      ],
+      "generic_callable": false,
+      "generic_callable_reason": "the real /api/debt/funding route takes a raw debt id, not a name — sutra's hand-written finanxe adapter resolves a debt name and account description to that id and the matching linked account first (fuzzy name matching, bank-nickname aliases, digit-mask/token-overlap scoring), which can't be expressed as a plain HTTP call"
+    }
+  ]
+}

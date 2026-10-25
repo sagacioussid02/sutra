@@ -1,0 +1,11 @@
+# Real trusted-user tokens — never commit. See tokens.example.yaml.
+tokens.yaml
+
+# Real discovery sources — never commit. See discovery-sources.example.yaml.
+discovery-sources.yaml
+
+# SQLite databases: audit log and pending confirmations.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

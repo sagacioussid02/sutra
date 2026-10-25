@@ -1,0 +1,10 @@
+# Copy this file to discovery-sources.yaml (gitignored) and fill in real
+# projects. Each source is a backend project serving a Sutra Agent Manifest
+# at manifest_url (see docs/agent-manifest.md). base_url is what discovered
+# tools are actually called against once approved — usually the same host
+# as manifest_url, without the /.well-known/sutra-agent.json suffix.
+
+sources:
+  - name: finanxe
+    manifest_url: http://127.0.0.1:8002/.well-known/sutra-agent.json
+    base_url: http://127.0.0.1:8002

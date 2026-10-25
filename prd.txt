@@ -1,0 +1,103 @@
+This document serves as the formal Product Requirements Document (PRD) and Technical Specification for the standalone Voice-Activated Multi-Agent Gateway. It is written directly for the engineering team responsible for implementation.
+
+## 1. Executive Summary & Use Case
+
+**The Vision:** A standalone hardware gadget acting as a low-latency, voice-activated "Jarvis." It serves as the single unified gateway to a distributed fleet of AI agents (Automated Trading, Financial Analysis, Persona AI, and Journaling) residing in various private repositories.
+
+**The Workflow:**
+
+1. The user speaks to the dedicated hardware gadget.
+2. The gadget streams audio with ultra-low latency to a cloud-based Orchestrator.
+3. The Orchestrator engages in fluid, real-time conversation. If a user request requires specialized knowledge or action, the Orchestrator delegates the task to the appropriate downstream agent swarm (e.g., CrewAI) using the Model Context Protocol (MCP).
+4. The Orchestrator continues the conversation asynchronously while backend agents process the task.
+
+**Cloud Strategy:** Phase 1 will exclusively utilize proprietary Large Language Models (LLMs) hosted on AWS (e.g., Amazon Bedrock) to ensure high reliability and reasoning capability before any future migration to local hardware inference.
+
+---
+
+## 2. Core Requirements
+
+### 2.1 Functional Requirements
+
+* **Always-On Voice Gateway:** The hardware must capture far-field audio, run local Voice Activity Detection (VAD) or wake-word detection, and stream to the cloud.
+* **Asynchronous Delegation:** The Orchestrator must not block the audio stream while waiting for backend agents. It must issue "fire-and-forget" tool calls and receive callbacks when the backend tasks are complete.
+* **Multi-Workspace Routing:** The system must dynamically route requests to distinct, isolated codebases (trading, finance, journaling) without requiring those codebases to be merged into a single monolith.
+* **Biometric/Speaker ID (Future-Proofing):** The architecture must support user identification to prevent unauthorized execution of sensitive agents (e.g., financial trading).
+
+### 2.2 Non-Functional Requirements
+
+* **Latency:** Glass-to-glass (mic-to-speaker) audio latency must remain under 800ms for natural conversational flow.
+* **Decoupling:** Downstream agents (CrewAI, Python, Go) must remain entirely agnostic of the voice layer. They simply expose their capabilities via a standardized protocol.
+* **Cloud Native:** Infrastructure must be deployable on AWS (ECS/EKS, API Gateway, Bedrock).
+
+---
+
+## 3. Software Architecture (AWS & Edge)
+
+The software stack separates the *real-time conversational layer* from the *heavy asynchronous reasoning layer*.
+
+### 3.1 The Real-Time Audio Layer: LiveKit (WebRTC)
+
+Do not use standard HTTP or REST for voice. You must use **LiveKit**, an open-source WebRTC framework designed for real-time AI agents.
+
+* **Client:** The hardware gadget runs the LiveKit SDK (Python or Go). It handles local acoustic echo cancellation (AEC) and streams raw audio to the server.
+* **Server:** A LiveKit server hosted on AWS (EC2 or ECS) manages the WebRTC session, handling network jitter, packet loss, and connection states seamlessly.
+
+### 3.2 The Orchestrator: LiveKit Agent + AWS Bedrock
+
+The Orchestrator is a lightweight Python service running on AWS ECS. It uses the LiveKit Agents framework to bridge the WebRTC audio stream to a multimodal LLM.
+
+* **Model:** Use Amazon Bedrock (e.g., Claude 3.5 Sonnet or Nova) as the Orchestrator's brain.
+* **Role:** The Orchestrator maintains conversational state, handles interruptions, and decides when to call external tools.
+* **Async Execution:** When the Orchestrator triggers an agent (e.g., `run_trading_analysis`), it pushes a message to an **Amazon SQS** queue and immediately returns a `job_id` to the LLM. The LLM can then say, *"I've asked the trading team to look into that. I'll let you know when they finish."*
+
+### 3.3 The Integration Layer: Model Context Protocol (MCP) Gateway
+
+Instead of building custom REST APIs for every single GitHub project, expose your backend projects as MCP Servers.
+
+* Deploy an **MCP Gateway** on AWS. The Orchestrator communicates with this Gateway.
+* The Gateway aggregates the available tools from all downstream repositories and presents them to the Orchestrator as a unified toolset.
+
+### 3.4 Downstream Agent Workspaces: CrewAI & Custom Code
+
+Your existing CrewAI projects and custom scripts sit behind the MCP layer.
+
+* CrewAI supports MCP natively; you can use its simple DSL integration (`mcps=[]` field) to seamlessly connect CrewAI agents to external tools and servers.
+* Deploy these backend swarms as containerized microservices on AWS ECS or AWS Lambda (if execution times permit).
+* **The Callback:** Once a CrewAI swarm finishes its analysis, it sends an HTTP POST request back to the LiveKit Orchestrator's webhook endpoint. The Orchestrator injects this result into the LiveKit session context, prompting the LLM to announce the result to the user.
+
+---
+
+## 4. Hardware Architecture (The Physical Gadget)
+
+Because all AI inference and routing is handled in AWS, the physical gadget is simply a "dumb terminal" with highly optimized audio capabilities.
+
+| Component | Recommendation | Purpose |
+| --- | --- | --- |
+| **Compute Board** | **Raspberry Pi 5 (4GB or 8GB)** | Runs a headless Linux OS, the LiveKit WebRTC client, and a local wake-word engine (like Picovoice Porcupine). It requires very low power and has massive community support. |
+| **Microphone Array** | **ReSpeaker USB Mic Array v2.0** | A 4-mic array with hardware-level DSP (Digital Signal Processing). It handles Acoustic Echo Cancellation (AEC) and noise suppression *before* the audio reaches the Pi, ensuring the agent doesn't hear its own voice. |
+| **Speaker** | Any high-quality active USB/3.5mm speaker | Outputting the text-to-speech audio from the cloud. |
+| **Enclosure** | 3D-printed acoustic housing | Ensure the microphone array is acoustically isolated from the speaker vibrations to prevent feedback loops. |
+
+---
+
+## 5. Developer Implementation Roadmap
+
+**Phase 1: The Conversational Core (AWS + LiveKit)**
+
+1. Spin up a LiveKit Server instance on AWS EC2.
+2. Deploy the LiveKit Agent Orchestrator service to AWS ECS. Configure it to use AWS Bedrock (Claude 3.5 Sonnet) for inference.
+3. Flash the Raspberry Pi 5, connect the ReSpeaker, and write a simple Python client that joins the LiveKit room on startup. Verify low-latency, interruption-capable conversation.
+
+**Phase 2: MCP Integration & The "Mock" Agent**
+
+1. Set up an MCP server within one of your existing workspaces (e.g., the Journal Agent).
+2. Provide the AWS Bedrock Orchestrator with the MCP client connection to expose the Journal tools.
+3. **Crucial Step:** Implement the asynchronous SQS queue pattern. Ensure the Orchestrator does not hang while the tool executes.
+
+**Phase 3: Multi-Swarm Scaling**
+
+1. Deploy the remaining Agent workspaces (Trading, Financial, Personas) to AWS ECS.
+2. Update their codebases to utilize CrewAI's MCP DSL for tool sharing and context management.
+3. Register all workspaces with the centralized MCP Gateway.
+4. Implement webhooks in the backend agents to push completion data back into the LiveKit session.
