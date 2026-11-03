@@ -484,3 +484,20 @@ Sutra can be lightly funny, and it learns what works for you. It starts small (a
 | --- | --- | --- |
 | `SUTRA_HUMOR` | on | `off` removes it |
 | `SUTRA_PERSONALITY_DIR` | the memory directory | where `personality.db` lives |
+
+## People, plans and listening
+
+Sutra remembers who you mention and what you have coming up, the way a friend would.
+
+- **What it keeps.** When a conversation ends, one small call reads only your own words and keeps people (a name and how they are related: "Sam, brother") and upcoming plans with a date when it is clear ("Sam's visit, Friday"). Anything about illness, doctors for a problem, hospitals, money, loss, family or legal trouble, or anyone's safety is never kept; routine appointments (a dentist check-up) are fine. It needs the conversation graph on, since it reads closed conversations.
+- **How it is used.** A short block of known people and plans goes into the prompt as background, so "Sam called" needs no explanation, and their names are added to the speech recognizer's vocabulary hint.
+- **"How did it go?"** The day after a plan it may ask, as a plain question at a quiet moment or after an answer, one at a time. Any engaged reply counts, not just yes; changing the subject or ignoring it nudges the bar up a little, refusing it a lot, and past a point it stops asking. "Not now" means it asks again tomorrow. A plan nobody asked about within three days is dropped quietly.
+- **A rare "how have you been?"** When you greet it after a gap, it may ask. The gap is learned from the same bar: a welcomed question returns in about 5 days, an unwelcome one is spaced out to weeks.
+- **Listening mode.** If you say you've had a rough day, need to vent, or "just want to talk" (or sound down), Sutra stops problem-solving for that turn and the next four: it reflects what you said, asks at most one gentle question, gives no lists, does not joke, adds no unprompted offers, and the conversation is not added to the graph as a topic. If you talk about wanting to die or hurting yourself, it responds with warmth and points to a crisis line (in the US, 988) and emergency services (911). **This is a safety net built from phrases, not a guarantee:** it can miss indirect wording and it is not a substitute for a person. The conversation itself is still in the memory record; erase it with the memory commands if you want it gone.
+
+Commands (text client): `/life` (list), `/life add plan <date> <text>`, `/life forget person <id>`, `/life forget plan <id>`, `/life forget all`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_LIFE` | on | `off` removes it |
+| `SUTRA_LIFE_DIR` | the memory directory | where `life.db` lives |

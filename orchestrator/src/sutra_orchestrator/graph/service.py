@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -90,6 +90,11 @@ class GraphService:
         self._recent: deque[str] = deque(maxlen=3)
         self._last_check: set[str] = set()
         self._tasks: set[asyncio.Task[None]] = set()
+        self._listeners: list[Callable[[list[str], datetime], Awaitable[None]]] = []
+
+    def add_listener(self, listener: "Callable[[list[str], datetime], Awaitable[None]]") -> None:
+        """Call ``listener(user_lines, when)`` whenever an episode closes (the user's words only)."""
+        self._listeners.append(listener)
 
     @property
     def store(self) -> GraphStore:
@@ -102,10 +107,12 @@ class GraphService:
     # ---------------------------------------------------------------- observe
 
     def observe(
-        self, utterance: str, reply: str, tools: list[str], *, low_confidence: bool = False
+        self, utterance: str, reply: str, tools: list[str], *, low_confidence: bool = False, private: bool = False
     ) -> None:
-        """Note one finished turn. Cheap and synchronous; model work happens in the background."""
-        if low_confidence:
+        """Note one finished turn. Cheap and synchronous; model work happens in the background.
+
+        A private turn (the user just wanted to talk) is not remembered as a topic at all."""
+        if low_confidence or private:
             return
         if any(t.startswith(p) for t in tools for p in self._exclude if p):
             return
@@ -142,6 +149,13 @@ class GraphService:
     # ------------------------------------------------------- build a node, link
 
     async def _finish(self, turns: list[_Turn]) -> None:
+        for listener in self._listeners:
+            try:
+                await listener([t.user for t in turns], turns[0].ts)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.debug("an episode listener failed", exc_info=True)
         try:
             await self._build(turns)
         except asyncio.CancelledError:

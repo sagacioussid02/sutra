@@ -65,6 +65,7 @@ class OpenOffer:
     step: str = "none"
     node_id: int | None = None
     signal_id: int | None = None
+    open: bool = False  # an open question ("how did it go?"): any engaged reply answers it, not only yes
     source: str = ""  # who produced the signal, for a timely offer
     detail: str = ""  # a signal's summary: untrusted data, used only to deliver an accepted ask
     retry_hours: float = 6.0
@@ -381,7 +382,8 @@ class OffersService:
             self._store.update_signal(sig.id, status="offered")
             return OpenOffer(
                 offer_id, "timely", style, sig.topic, sig.teaser or "", signal_id=sig.id,
-                source=sig.source, detail=sig.summary, retry_hours=sig.retry_hours or 6.0,
+                open=sig.kind == "checkin", source=sig.source, detail=sig.summary,
+                retry_hours=sig.retry_hours or 6.0,
             )
         return None
 

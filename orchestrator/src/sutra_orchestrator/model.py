@@ -245,6 +245,36 @@ STRUCTURED_TOOLS: dict[str, dict[str, Any]] = {
             "required": ["joked"],
         },
     },
+    "life_extract": {
+        "name": "record_life",
+        "description": "Record the people and plans the person mentioned, possibly none.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "people": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}, "relation": {"type": "string"}},
+                        "required": ["name"],
+                    },
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "when": {"type": "string"},
+                            "who": {"type": "string"},
+                        },
+                        "required": ["text"],
+                    },
+                },
+            },
+            "required": ["people", "events"],
+        },
+    },
     "judgement": {
         "name": "record_judgement",
         "description": "Decide whether to speak up now, and how.",

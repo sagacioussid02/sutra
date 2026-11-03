@@ -12,7 +12,7 @@ from datetime import datetime
 
 from .store import OffersStore
 
-START = {"followup": 0.55, "timely": 0.50, "research": 0.50}
+START = {"followup": 0.55, "timely": 0.50, "research": 0.50, "checkin": 0.50}
 LOW, HIGH = 0.30, 0.95
 STEP = {"accepted": -0.04, "ignored": 0.02, "declined": 0.06, "deferred": 0.0}
 DRIFT_PER_DAY = 0.05  # fraction of the distance back to START recovered each day
