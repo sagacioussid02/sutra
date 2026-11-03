@@ -470,3 +470,17 @@ Text-client commands: `/lessons` (list), `why <id>`, `approve <id>`, `reject <id
 | `SUTRA_LESSONS_DIR` | the memory directory | where `lessons.db` lives |
 
 Reading corrections needs memory on; the offer-outcome proposals need offers on.
+
+## Humor
+
+Sutra can be lightly funny, and it learns what works for you. It starts small (about one eligible reply in eight) and never tries at the wrong moment: not on a turn that uses a tool, not while a confirmation is waiting, not after money, health, family trouble, loss or legal trouble come up or when you sound frustrated or stressed (the next three turns then stay serious), and not on a doubtful transcript. Those rules are code, not a request to the model.
+
+- **Styles.** Dry understatement, a gentle joke about being an AI, light teasing (starts lower), wordplay, and absurd comparison. When a turn is allowed, one style is suggested with "only if something natural comes to mind", so most invitations produce no joke.
+- **Learning.** After a turn where humor was offered, one small call reads your next words: was a joke made, and did you laugh, smile, shrug, groan or get annoyed? Each style's score moves by small steps. After ten judged jokes the level moves one step if most landed or most didn't (by itself it never goes above 6). "Please stop joking" sets it to zero.
+- **Variety** is the humor version of temperature: low sticks to what has worked, high keeps trying other styles. It is separate from the model's sampling temperature, which makes replies random rather than funnier.
+- **Control.** Say "be funnier", "fewer jokes" or "no jokes". `/humor` shows the level, variety and how each style has landed; `/humor level 0-10`, `variety 0.2-2`, `style <name> <0-1>`, `off`, `on`, `reset`. Only numbers and counts are stored.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_HUMOR` | on | `off` removes it |
+| `SUTRA_PERSONALITY_DIR` | the memory directory | where `personality.db` lives |

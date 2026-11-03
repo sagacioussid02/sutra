@@ -22,6 +22,7 @@ from .graph import GraphCommands
 from .offers import OffersCommands, build_graph_and_offers
 from .idle import IdleCommands, build_idle
 from .lessons import LessonCommands, build_lessons
+from .personality import HumorCommands, PersonalityService, PersonalityStore
 from .agents.factory import build_agent_service
 from .reminders import ReminderScheduler, ReminderService, ReminderStore
 from .reminders.commands import ReminderCommands
@@ -112,6 +113,12 @@ async def _run(verbose: bool) -> int:
             else None
         )
         lesson_commands = LessonCommands(lessons) if lessons is not None else None
+        personality = (
+            PersonalityService(PersonalityStore(_memory_dir(config.personality_dir)), model)
+            if config.humor_enabled
+            else None
+        )
+        humor_commands = HumorCommands(personality) if personality is not None else None
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -123,7 +130,7 @@ async def _run(verbose: bool) -> int:
         # line (including "unknown command"), so it must be tried last.
         commands = CommandSet(
             reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands,
-            idle_commands, lesson_commands, memory_commands
+            idle_commands, lesson_commands, humor_commands, memory_commands
         )
         orchestrator = Orchestrator(
             model=model,
@@ -136,6 +143,7 @@ async def _run(verbose: bool) -> int:
             graph=graph,
             offers=offers,
             lessons=lessons,
+            personality=personality,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
@@ -225,6 +233,8 @@ async def _run(verbose: bool) -> int:
                 idle.store.close()
             if lessons is not None:
                 lessons.store.close()
+            if personality is not None:
+                personality.store.close()
     finally:
         await gateway.close()
     return 0

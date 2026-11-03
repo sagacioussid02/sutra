@@ -49,6 +49,8 @@ class Config:
     offers_daily_max: int = 4
     offers_calls_per_day: int = 200
     offers_urgent_sources: tuple[str, ...] = ()
+    humor_enabled: bool = True
+    personality_dir: str = "data"
     lessons_enabled: bool = True
     lessons_reflection: bool = True
     lessons_dir: str = "data"
@@ -155,6 +157,8 @@ def load_config(
         offers_urgent_sources=tuple(
             t.strip() for t in (merged.get("SUTRA_OFFERS_URGENT_SOURCES") or "").split(",") if t.strip()
         ),
+        humor_enabled=_bool(merged, "SUTRA_HUMOR", True),
+        personality_dir=merged.get("SUTRA_PERSONALITY_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
         lessons_enabled=_bool(merged, "SUTRA_LESSONS", True),
         lessons_reflection=_bool(merged, "SUTRA_LESSONS_REFLECTION", True),
         lessons_dir=merged.get("SUTRA_LESSONS_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",

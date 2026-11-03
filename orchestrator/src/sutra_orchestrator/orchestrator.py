@@ -39,6 +39,7 @@ from .agents import DELEGATE_TOOL, AgentService, Findings
 from .graph import GraphService
 from .interests import InterestService
 from .offers import OffersService, OpenOffer, is_deferral
+from .personality import PersonalityService
 from .classifier import AFFIRM, DENY, MODIFY, IntentClassifier
 from .gateway import CONFIRM_TOOL, GatewaySession, PendingInfo, ToolDef, ToolResult
 from .memory import (
@@ -175,6 +176,7 @@ class Orchestrator:
         graph: GraphService | None = None,
         offers: OffersService | None = None,
         lessons: LessonSource | None = None,
+        personality: PersonalityService | None = None,
         max_tool_calls: int = 6,
         history_turns: int = 20,
         reask_limit: int = 2,
@@ -192,6 +194,7 @@ class Orchestrator:
         self._graph = graph
         self._offers = offers
         self._lessons = lessons
+        self._personality = personality
         self._open_offer: OpenOffer | None = None
         self._open_offer_at: datetime | None = None
         self.last_activity: datetime = (now or (lambda: datetime.now(timezone.utc)))()
@@ -267,6 +270,7 @@ class Orchestrator:
             agents=self._agents,
             interests=self._interests,
             lessons=self._lessons,
+            personality=self._personality,
             max_tool_calls=self._max_tool_calls,
             history_turns=self._history_turns,
             reask_limit=self._reask_limit,
@@ -338,6 +342,8 @@ class Orchestrator:
         if self._graph is not None:
             self._graph.close_episode()
             await self._graph.flush()
+        if self._personality is not None:
+            await self._personality.flush()
 
     def set_open_offer(self, offer: OpenOffer) -> None:
         """Register an offer a client has just put to the user (for example spoken at a quiet moment)."""
@@ -380,6 +386,8 @@ class Orchestrator:
             return ""
 
         self.last_activity = self._now()
+        if self._personality is not None:
+            self._personality.start_reaction(text)  # how did they take the last joke? read beside this turn
         turn = _Turn()
         extra_system = ""
         reply: str | None = None
@@ -586,7 +594,9 @@ class Orchestrator:
         self._speaker = speaker_id
         followup = self._start_followup(text, extra_system, low_confidence)
         try:
-            return await self._run_turn_inner(text, turn, extra_system, speaker_id, followup, on_text)
+            return await self._run_turn_inner(
+                text, turn, extra_system, speaker_id, followup, on_text, low_confidence
+            )
         finally:
             if followup is not None and not followup.done():
                 followup.cancel()
@@ -618,6 +628,7 @@ class Orchestrator:
         speaker_id: str | None,
         followup: "asyncio.Future[OpenOffer | None] | None",
         on_text: Callable[[str], None] | None = None,
+        low_confidence: bool = False,
     ) -> str:
         memories = await self._recall(text)
         system = self._system
@@ -644,6 +655,15 @@ class Orchestrator:
         if extra_system:
             system += "\n\n" + extra_system
 
+        humor = None
+        if self._personality is not None:
+            # Code decides whether a light touch of humor is even allowed; the note only invites it.
+            humor = self._personality.plan(
+                text, action_pending=self._pending is not None, has_note=bool(extra_system),
+                low_confidence=low_confidence,
+            )
+        first_system = f"{system}\n\n{humor.note}" if humor is not None else system
+
         tools = self._tool_defs()
         msgs: list[dict[str, Any]] = [{"role": "user", "content": [{"type": "text", "text": text}]}]
         self._turn_msgs = msgs
@@ -654,7 +674,10 @@ class Orchestrator:
         while True:
             started = time.perf_counter()
             response = await self._complete(
-                on_text, system=system, messages=self._flat_history() + msgs, tools=tools
+                on_text,
+                system=system if turn.tools else first_system,  # humor only before any tool call
+                messages=self._flat_history() + msgs,
+                tools=tools,
             )
             log.debug("model call took %.2fs", time.perf_counter() - started)
             msgs.append({"role": "assistant", "content": response.content})
@@ -700,6 +723,8 @@ class Orchestrator:
                 msgs.append(_text_msg("assistant", reply))
                 break
 
+        if humor is not None and not turn.tools:
+            self._personality.remember(humor, reply)  # type: ignore[union-attr]
         if not extra_system:
             reply = await self._append_offer(
                 reply, msgs, followup, pending_created, limit_hit_reply=reply == LIMIT_REPLY
@@ -883,6 +908,8 @@ class Orchestrator:
             tools = [*tools, *self._offers.tools()]
         if self._lessons is not None:
             tools = [*tools, *self._lessons.tools()]
+        if self._personality is not None:
+            tools = [*tools, *self._personality.tools()]
         for tool in tools:
             if tool.name == CONFIRM_TOOL or tool.name in self._gateway_tools:
                 log.warning("ignoring local tool %r: name is reserved or already in use", tool.name)
