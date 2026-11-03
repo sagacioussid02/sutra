@@ -38,6 +38,7 @@ from typing import Any, Protocol
 from .agents import DELEGATE_TOOL, AgentService, Findings
 from .graph import GraphService
 from .interests import InterestService
+from .feeds import FeedService
 from .life import LifeService, LifeTurn, engaged, refuses
 from .offers import OffersService, OpenOffer, is_deferral
 from .personality import PersonalityService
@@ -185,6 +186,7 @@ class Orchestrator:
         lessons: LessonSource | None = None,
         personality: PersonalityService | None = None,
         life: LifeService | None = None,
+        feeds: FeedService | None = None,
         max_tool_calls: int = 6,
         history_turns: int = 20,
         reask_limit: int = 2,
@@ -204,6 +206,7 @@ class Orchestrator:
         self._lessons = lessons
         self._personality = personality
         self._life = life
+        self._feeds = feeds
         self._life_turn = LifeTurn()
         self._open_offer: OpenOffer | None = None
         self._open_offer_at: datetime | None = None
@@ -282,6 +285,7 @@ class Orchestrator:
             lessons=self._lessons,
             personality=self._personality,
             life=self._life,
+            feeds=self._feeds,
             max_tool_calls=self._max_tool_calls,
             history_turns=self._history_turns,
             reask_limit=self._reask_limit,
@@ -953,6 +957,8 @@ class Orchestrator:
             tools = [*tools, *self._lessons.tools()]
         if self._personality is not None:
             tools = [*tools, *self._personality.tools()]
+        if self._feeds is not None:
+            tools = [*tools, *self._feeds.tools()]
         for tool in tools:
             if tool.name == CONFIRM_TOOL or tool.name in self._gateway_tools:
                 log.warning("ignoring local tool %r: name is reserved or already in use", tool.name)

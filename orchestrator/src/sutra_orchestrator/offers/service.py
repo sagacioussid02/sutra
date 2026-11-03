@@ -42,6 +42,14 @@ _DEFER = re.compile(
 
 
 RESEARCH_SOURCE = "idle-research"
+NEWS_SOURCE = "news-feed"
+# Signals the user's own interests produced: connected by construction, always a topic-only ask, and
+# paced by a bar of their own (the producer applies it) instead of a second benefit bar.
+BAR_FOR_SOURCE = {RESEARCH_SOURCE: "research", NEWS_SOURCE: "news"}
+
+
+def news_teaser(topic: str) -> str:
+    return f"There's news about {' '.join(topic.split())[:50]}, want to hear it?"
 
 
 def research_teaser(topic: str) -> str:
@@ -303,10 +311,10 @@ class OffersService:
     async def _judge_signal(self, sig: Signal, now: datetime) -> bool:
         assert self._judge is not None
         related = self._graph.connected(f"{sig.summary} {sig.topic_hint}") if self._graph else []
-        approved = sig.source == RESEARCH_SOURCE  # an approved interest is a connection by construction
+        approved = sig.source in BAR_FOR_SOURCE  # an approved interest is a connection by construction
         context = ""
         if approved:
-            context = f"The person has approved '{sig.topic}' as something they are interested in, and this was looked up for them while they were away."
+            context = f"The person has approved '{sig.topic}' as something they are interested in, and this came from outside for them."
         elif related:
             context = "Earlier conversations that may relate (what the person said or planned):\n" + "\n".join(
                 f"- {c.node.topic}: {c.node.gist}" for c in related
@@ -323,11 +331,12 @@ class OffersService:
             since_last=self._since_last(now),
             busy=False,
             context=context,
-            force_style="tell" if (sig.safety or sig.urgent_path) else ("ask" if sig.kind == "research" else None),
+            force_style="tell" if (sig.safety or sig.urgent_path) else ("ask" if sig.kind in ("research", "news") else None),
         )
-        if judgement is not None and sig.kind == "research":
-            # Findings come from the web: only the topic is said until the user agrees.
-            judgement = replace(judgement, style="ask", teaser=research_teaser(sig.topic))
+        if judgement is not None and sig.kind in ("research", "news"):
+            # Findings and headlines come from the web: only the topic is said until the user agrees.
+            teaser = news_teaser(sig.topic) if sig.kind == "news" else research_teaser(sig.topic)
+            judgement = replace(judgement, style="ask", teaser=teaser)
         if judgement is None:
             # No usable answer (rail reached, model failure): look again shortly, not every minute.
             self._store.update_signal(sig.id, status="held", hold_until=min(sig.expires_at, now + timedelta(minutes=10)))
@@ -342,7 +351,7 @@ class OffersService:
             return False
         # A finding already cleared the research bar when the topic was picked; the judge's own
         # offer/hold/drop (timing, interruption) decides the rest, without a second benefit bar.
-        below = judgement.benefit < bar and sig.kind != "research"
+        below = judgement.benefit < bar and sig.kind not in ("research", "news")
         if judgement.decision == "hold" or below:
             self._store.update_signal(sig.id, status="held", hold_until=until, reason=judgement.reason)
             self._log_held("timely", sig.topic, "none", judgement.benefit, bar, judgement, now, signal_id=sig.id)
@@ -454,8 +463,8 @@ class OffersService:
                 # as "held", where the judge would pick it up and weigh it like an ordinary signal.
                 self._store.update_signal(offer.signal_id, status="done")
                 return
-            if sig is not None and sig.source == RESEARCH_SOURCE:
-                self._bars.record("research", outcome, now)  # how welcome idle findings are
+            if sig is not None and sig.source in BAR_FOR_SOURCE:
+                self._bars.record(BAR_FOR_SOURCE[sig.source], outcome, now)  # how welcome they are
             if outcome == "deferred" and sig is not None and sig.expires_at > retry:
                 self._store.update_signal(offer.signal_id, status="held", hold_until=retry)
             else:

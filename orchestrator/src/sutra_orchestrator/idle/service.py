@@ -57,8 +57,10 @@ class IdleResearcher:
         daily_runs: int = 1,
         min_hours: float = 48.0,
         default_enabled: bool = False,
+        home_area: str = "",
         now: Callable[[], datetime] | None = None,
     ) -> None:
+        self._home_area = home_area.strip()
         self._store = store
         self._interests = interests
         self._graph = graph
@@ -149,6 +151,9 @@ class IdleResearcher:
             last = next((r for r in runs if similar(row.topic, r.topic) and r.outcome in ("done", "partial")), None)
             seen = "never researched" if last is None else f"researched {(now - last.created_at).days} day(s) ago"
             out.append(Topic(row.topic, "interest", f"{seen}; reactions: {reactions(row.topic, outcomes)}"))
+        local = "local events and things to do"
+        if self._home_area and not self._blocked(local) and not waiting(local):
+            out.append(Topic(local, "area", f"their home area is allowed for this one; reactions: {reactions(local, outcomes)}"))
         if self._graph is not None:
             for node in self._graph.store.list():
                 age = (now - node.last_touched).days
@@ -178,7 +183,9 @@ class IdleResearcher:
         runs = self._store.recent(10)
         earlier = [f"{r.topic} ({r.created_at:%Y-%m-%d}, {r.outcome})" for r in runs if r.outcome != "skipped"]
         today = now.astimezone(self._tz)
-        pick = await self._picker.pick(topics, now, earlier, f"{today:%A, %B} {today.day}, {today.year}")
+        pick = await self._picker.pick(
+            topics, now, earlier, f"{today:%A, %B} {today.day}, {today.year}", area=self._home_area
+        )
         if pick is None:
             return "nothing worth researching right now"
         bar = self._offers.bars.value("research", now)

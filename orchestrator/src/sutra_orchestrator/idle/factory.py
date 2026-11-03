@@ -53,4 +53,5 @@ def build_idle(
         daily_runs=config.idle_daily_runs,
         min_hours=float(config.idle_min_hours),
         default_enabled=config.idle_enabled,
+        home_area=config.home_area,
     )

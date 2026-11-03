@@ -66,11 +66,14 @@ class Picker:
         self._spend = spend or (lambda: True)
 
     async def pick(
-        self, topics: list[Topic], today: datetime, earlier: list[str], tz_date: str
+        self, topics: list[Topic], today: datetime, earlier: list[str], tz_date: str, area: str = ""
     ) -> Pick | None:
         if not topics or not self._spend():
             return None
-        lines = [f"Today is {tz_date}.", "", "Topics:"]
+        lines = [f"Today is {tz_date}."]
+        if area:
+            lines.append(f"The person lets you use their area ({area}) in a brief, for local topics only.")
+        lines += ["", "Topics:"]
         lines += [f"[{i}] {t.label} ({t.note})" for i, t in enumerate(topics, 1)]
         lines += ["", "Earlier research:"] + (earlier or ["(none)"])
         raw = await asyncio.wait_for(
