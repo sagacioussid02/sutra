@@ -44,7 +44,8 @@ async def _run(verbose: bool) -> int:
     configure_logging(verbose, [config.token, config.api_key, vc.openai_api_key])
 
     local = Engines(
-        FasterWhisperTranscriber(vc.local_stt_model), SaySpeaker(vc.local_voice), "private: local speech, nothing leaves this machine for audio"
+        FasterWhisperTranscriber(vc.local_stt_model, vc.local_stt_language or None),
+        SaySpeaker(vc.local_voice, vc.local_voice_hi), "private: local speech, nothing leaves this machine for audio"
     )
     cloud: Engines | None = None
     if not vc.openai_api_key:

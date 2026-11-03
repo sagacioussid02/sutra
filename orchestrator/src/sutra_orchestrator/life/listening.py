@@ -23,6 +23,16 @@ _CRISIS = re.compile(
     r"better off (?:dead|without me)|want(?:ed|ing)? to (?:just )?disappear(?! (?:into|for|from|on|to|in)\b)|not worth living)\b",
     re.IGNORECASE,
 )
+_ND, _NA = r"(?<![\u0900-\u097f\w])", r"(?![\u0900-\u097f\w])"
+_VENT_HI = re.compile(
+    _ND + r"(?:mann? kharab|मन खराब|udaas|उदास|akela mehsoos|अकेला महसूस|akelapan|अकेलापन|bura din|बुरा दिन|baat karni hai|"
+    r"बात करनी है|baat karna chahta|baat karna chahti|बात करना चाहता|बात करना चाहती|dil bhaari|दिल भारी|bahut pareshan|"
+    r"बहुत परेशान|ghabrahat|घबराहट|thak gaya hoon|thak gayi hoon|थक गया हूँ|थक गई हूँ|rona aa raha|रोना आ रहा)" + _NA,
+    re.IGNORECASE)
+_CRISIS_HI = re.compile(
+    _ND + r"(?:marna chahta|marna chahti|मरना चाहता|मरना चाहती|jeena nahi chahta|jeena nahi chahti|जीना नहीं चाहता|"
+    r"जीना नहीं चाहती|jeene ka mann nahi|जीने का मन नहीं|khud ko khatam|खुद को खत्म|apni jaan|अपनी जान|aatmahatya|आत्महत्या|"
+    r"zindagi khatam|ज़िंदगी खत्म|जिंदगी खत्म|khud ko nuksan|खुद को नुकसान|suicide)" + _NA, re.IGNORECASE)
 _GREETING = re.compile(r"^\W*(hi|hey|hello|yo|good (?:morning|afternoon|evening)|morning|evening|how are you|"
                        r"how'?s it going|what'?s up|sup)\b", re.IGNORECASE)
 
@@ -31,6 +41,10 @@ LISTEN_NOTE = (
     "they ask for it. Reflect back what you heard in their own terms, and ask at most one gentle question. Do not "
     "joke. Keep it short and warm, like a friend who is simply there. You are not a therapist; mention that only "
     "if it truly matters."
+)
+CRISIS_NOTE_HI_EXTRA = (
+    " If they are in India: Tele-MANAS, the national mental health helpline, is free at 14416, and 112 is the "
+    "emergency number. Reply in the language they used."
 )
 CRISIS_NOTE = (
     "The user may be thinking about ending their life or hurting themselves. Respond with warmth first: say you are "
@@ -42,11 +56,11 @@ CRISIS_NOTE = (
 
 
 def is_vent(text: str) -> bool:
-    return bool(_VENT.search(text))
+    return bool(_VENT.search(text) or _VENT_HI.search(text))
 
 
 def is_crisis(text: str) -> bool:
-    return bool(_CRISIS.search(text))
+    return bool(_CRISIS.search(text) or _CRISIS_HI.search(text))
 
 
 def is_greeting(text: str) -> bool:

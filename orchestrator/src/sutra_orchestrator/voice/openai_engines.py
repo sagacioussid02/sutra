@@ -13,7 +13,8 @@ DEFAULT_TTS_INSTRUCTIONS = (
     "pitch and rhythm the way people do: a little quicker on easy things, slower and softer when "
     "something is serious, with short natural pauses between thoughts. Smile when something is light. "
     "Do not sound like an announcer or a customer-service bot, and never read a list in a sing-song. "
-    "Let small fillers like 'hmm' or 'okay' sound casual and unhurried."
+    "Let small fillers like 'hmm' or 'okay' sound casual and unhurried. When the text is in Hindi, speak it as a "
+    "native Hindi speaker would, with natural Hindi sounds and rhythm, never with an English accent."
 )
 CACHE_PHRASE_CHARS = 40  # short phrases (the fillers) are kept and replayed with no network round trip
 CACHE_PHRASES = 24
