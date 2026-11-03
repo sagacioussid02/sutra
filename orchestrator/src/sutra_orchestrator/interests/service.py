@@ -52,6 +52,7 @@ class InterestService:
         now: Callable[[], datetime] | None = None,
         on_offer: Callable[[], None] | None = None,
     ) -> None:
+        self.nudged = False  # whether the last block() carried the nudge note
         self._store = store
         self._tz = tz
         self._reflector = reflector
@@ -81,8 +82,13 @@ class InterestService:
         rows.sort(key=lambda r: r.last_seen_at, reverse=True)
         return rows[:MAX_IN_BLOCK]
 
-    def block(self, now: datetime) -> str:
-        """The labelled prompt block, or "" when there is nothing to say."""
+    def block(self, now: datetime, *, allow_nudge: bool = True) -> str:
+        """The labelled prompt block, or "" when there is nothing to say.
+
+        ``allow_nudge`` is the offers arbiter's say-so: when False, the block is still given but
+        carries no permission to bring interests up on this turn.
+        """
+        self.nudged = False
         rows = self._live(now)
         if not rows:
             return ""
@@ -94,9 +100,10 @@ class InterestService:
         ]
         lines += [f"- {r.topic}" for r in rows]
         last = self._store.get_time("last_nudge")
-        if last is None or now - last >= timedelta(hours=self._nudge_hours):
+        if allow_nudge and (last is None or now - last >= timedelta(hours=self._nudge_hours)):
             self._store.set_time("last_nudge", now)  # counted whether or not it is used
             lines.append(_NUDGE_NOTE)
+            self.nudged = True
         lines.append("</interests>")
         return "\n".join(lines)
 

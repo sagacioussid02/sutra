@@ -49,6 +49,12 @@ class InterestModel(Protocol):
     async def reflect_interests(self, *, system: str, user: str) -> list[dict[str, Any]]: ...
 
 
+class StructuredModel(Protocol):
+    """A forced-schema call: the named schema's object back, or {} if the model gave nothing."""
+
+    async def structured(self, *, name: str, system: str, user: str) -> dict[str, Any]: ...
+
+
 class ExtractorModel(Protocol):
     async def extract(self, *, system: str, user: str) -> list[dict[str, Any]]: ...
 
@@ -114,6 +120,94 @@ _INTERESTS_TOOL = {
             }
         },
         "required": ["items"],
+    },
+}
+
+
+_STEPS = ["example", "deeper", "practice", "decision"]
+
+# Forced-schema calls for the episode graph and the offer judge, keyed by name.
+STRUCTURED_TOOLS: dict[str, dict[str, Any]] = {
+    "episode": {
+        "name": "record_episode",
+        "description": "Summarise the conversation as one episode, or say it is not worth keeping.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "keep": {"type": "boolean"},
+                "topic": {"type": "string"},
+                "gist": {"type": "string"},
+                "mode": {
+                    "type": "string",
+                    "enum": ["explained", "planned", "worked_on", "decided", "asked"],
+                },
+                "open": {"type": "array", "items": {"type": "string", "enum": _STEPS}},
+                "entities": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["keep"],
+        },
+    },
+    "links": {
+        "name": "record_links",
+        "description": "Record how the new episode relates to the numbered earlier ones, possibly none.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "edges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "target": {"type": "integer"},
+                            "type": {
+                                "type": "string",
+                                "enum": [
+                                    "same_topic",
+                                    "extends",
+                                    "prerequisite_of",
+                                    "applies_to",
+                                    "updates",
+                                ],
+                            },
+                            "strength": {"type": "number"},
+                            "reason": {"type": "string"},
+                        },
+                        "required": ["target", "type", "strength", "reason"],
+                    },
+                }
+            },
+            "required": ["edges"],
+        },
+    },
+    "advice": {
+        "name": "record_advice",
+        "description": "Name the one earlier episode worth following up now, or 0 for none.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "choice": {"type": "integer"},
+                "benefit": {"type": "number"},
+                "reason": {"type": "string"},
+                "step": {"type": "string", "enum": [*_STEPS, "none"]},
+            },
+            "required": ["choice"],
+        },
+    },
+    "judgement": {
+        "name": "record_judgement",
+        "description": "Decide whether to speak up now, and how.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string", "enum": ["offer", "hold", "drop"]},
+                "benefit": {"type": "number"},
+                "style": {"type": "string", "enum": ["ask", "tell"]},
+                "teaser": {"type": "string"},
+                "retry_after_hours": {"type": "number"},
+                "reason": {"type": "string"},
+            },
+            "required": ["decision", "benefit", "style", "teaser", "reason"],
+        },
     },
 }
 
@@ -246,3 +340,18 @@ class AnthropicModel:
                 statements = block.input.get("statements") if isinstance(block.input, dict) else None
                 return statements if isinstance(statements, list) else []
         return []
+
+    async def structured(self, *, name: str, system: str, user: str) -> dict[str, Any]:
+        tool = STRUCTURED_TOOLS[name]
+        response = await self._client.messages.create(
+            model=self._extractor_model,
+            max_tokens=700,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            tools=[tool],
+            tool_choice={"type": "tool", "name": tool["name"]},
+        )
+        for block in response.content:
+            if block.type == "tool_use" and block.name == tool["name"]:
+                return block.input if isinstance(block.input, dict) else {}
+        return {}

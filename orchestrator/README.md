@@ -372,3 +372,24 @@ Text-client commands: `/interests` (list), `why <id>`, `history <id>`, `approve 
 | `SUTRA_INTERESTS_DIR` | the memory directory | where `interests.db` lives |
 
 Reflection needs memory on (it reads the conversation record). Facts you state ("I get paid on the 15th") are tracked separately by memory, which reports when one is updated.
+
+## Conversation graph and offers
+
+Sutra remembers *what you talked about* as a graph and sometimes speaks up on its own. Nothing here acts for you: an offer is only ever something said.
+
+- **The graph.** When a conversation winds down (the subject changes, you go quiet for half an hour, or the session ends), a small model writes one node: a short topic, a one-or-two sentence gist, and what was left unsaid (an example, going deeper, something to try). Nodes are linked to earlier ones with a type (same topic, extends, applies to, ...) and a one-sentence reason you can read. Your words and its replies are not stored, only that summary. Turns that used a `finanxe_` tool contribute nothing, and on other tool turns only your own words count.
+- **Follow-ups.** While you talk, a subagent compares what you're doing with the graph. Say you asked "how does tool calling work" yesterday and get a short answer, and today you're building an assistant: a judge decides whether an example would help *now*. If so, your question is answered first and one sentence is added at the end ("Want a short example of how tool calling would look in your weather assistant?"). Yes gets one short, spoken-style example built only from what is actually in the conversation; "not now" holds it back; "no" closes it; anything else just carries on.
+- **Timely offers.** Outside signals (a weather warning, a finished research run) are judged against what you've said and planned. A snow warning for a mountain drive you mentioned is said as a plain heads-up; something merely interesting becomes a teaser question ("Something good turned up for your Diwali plans, want it?"). A signal expires, and an expired one is never spoken. Nothing produces signals yet except `/offers signal`, for testing; weather and idle research come later.
+- **No fixed schedule.** There is no timer for follow-ups. The judge scores the benefit and picks when to look again; the score has to clear a bar that moves with how you respond (a yes lowers it, a decline raises it more, ignoring raises it a little, and it drifts back on its own). Only safety rails are fixed: at most 4 offers a day (urgent ones excepted), never during a confirmation or while another offer is open, a daily cap on this feature's own model calls, and your stops.
+- **Control.** Say "stop offering me examples" (or "stop telling me about weather") and it stops. `/offers` shows each offer, how you answered, the judge's reason and the current bars.
+
+Text-client commands: `/graph` (list), `/graph <id>` (links and reasons), `/graph forget <id|all>`; `/offers`, `/offers off|on`, `/offers reset`, `/offers block <topic|followup|timely|nudge>`, `/offers unblock <id>`, `/offers signal <kind> <minutes> <text>`, `/offers forget all`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_GRAPH` | on | `off` removes the graph (and with it follow-ups) |
+| `SUTRA_OFFERS` | on | `off` removes all unprompted offers |
+| `SUTRA_OFFERS_DAILY_MAX` | 4 | rail on offers per day (urgent ones may exceed it) |
+| `SUTRA_OFFERS_CALLS` | 200 | rail on this feature's own small-model calls per day |
+| `SUTRA_OFFERS_URGENT_SOURCES` | none | comma-separated producers allowed to mark a short-fuse signal urgent |
+| `SUTRA_GRAPH_DIR`, `SUTRA_OFFERS_DIR` | the memory directory | where `graph.db` and `offers.db` live |

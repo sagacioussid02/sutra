@@ -42,6 +42,13 @@ class Config:
     reflection_exclude_tools: tuple[str, ...] = ("finanxe_",)
     nudge_hours: int = 24
     interests_dir: str = "data"
+    graph_enabled: bool = True
+    graph_dir: str = "data"
+    offers_enabled: bool = True
+    offers_dir: str = "data"
+    offers_daily_max: int = 4
+    offers_calls_per_day: int = 200
+    offers_urgent_sources: tuple[str, ...] = ()
     agents_enabled: bool = True
     agent_model: str = DEFAULT_CLASSIFIER_MODEL
     agent_tools: tuple[str, ...] = ()
@@ -130,6 +137,15 @@ def load_config(
         ),
         nudge_hours=_int(merged, "SUTRA_NUDGE_HOURS", 24),
         interests_dir=merged.get("SUTRA_INTERESTS_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
+        graph_enabled=_bool(merged, "SUTRA_GRAPH", True),
+        graph_dir=merged.get("SUTRA_GRAPH_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
+        offers_enabled=_bool(merged, "SUTRA_OFFERS", True),
+        offers_dir=merged.get("SUTRA_OFFERS_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
+        offers_daily_max=_int(merged, "SUTRA_OFFERS_DAILY_MAX", 4),
+        offers_calls_per_day=_int(merged, "SUTRA_OFFERS_CALLS", 200),
+        offers_urgent_sources=tuple(
+            t.strip() for t in (merged.get("SUTRA_OFFERS_URGENT_SOURCES") or "").split(",") if t.strip()
+        ),
         agents_enabled=_bool(merged, "SUTRA_AGENTS", True),
         agent_model=merged.get("SUTRA_AGENT_MODEL") or DEFAULT_CLASSIFIER_MODEL,
         agent_tools=tuple(
