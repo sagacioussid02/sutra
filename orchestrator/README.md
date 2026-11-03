@@ -520,3 +520,21 @@ Text-client commands: `/feeds` (what is on, last checked), `/feeds news on|off`,
 | `SUTRA_NEWS_TOPICS` | none | extra news topics, comma-separated |
 | `SUTRA_UNITS` | `imperial` | or `metric` |
 | `SUTRA_FEEDS` | on | `off` removes the feeds (nothing happens without an area or news anyway) |
+
+## Hindi and translation
+
+Sutra answers in the language you use: Hindi in Devanagari (so it is spoken properly), English, or a mix. Speak to it in Hindi or Hinglish ("haan kar do", "kal subah 9 baje yaad dilana ki...") and it understands.
+
+- **Confirmations are as safe as in English.** "haan", "bilkul", "हाँ", "kar do" confirm; "nahi", "mat karo", "नहीं", "रहने दो" refuse; both without a model call. Everything else goes to the isolated classifier, which has Hindi and Hinglish examples: "pata nahi" is not a refusal, "haan lekin 300 kar do" is a change, "haan haan, ruko" is not a clean yes, and a reply that mixes scripts ("नहीं yes") is never taken as yes. The labelled set has 129 replies, 71 of them Hindi or Hinglish, and the real classifier got all 129 right with no false "affirm". Fixed replies on the confirmation, offer and reminder paths come back in Hindi after a Hindi message.
+- **Reminders in Hindi.** "मुझे 5 मिनट बाद याद दिलाना कि चाय बनानी है", "aaj shaam 6 baje reminder laga do ki gym jaana hai". The reminder text stays in your words, the confirmation is in Hindi ("ठीक है। कल सुबह 9:00 बजे आपको याद दिलाया जाएगा: ..."), and an hour with no part of day asks "सुबह या शाम?". "Kal" is taken as tomorrow, and the exact time is spoken back so a wrong reading is heard at once. "Parso" and anything the parser cannot pin down get a question, not a guess.
+- **Translate.** Ask for a one-off ("how do I say where is the station in Hindi") and it gives the Hindi, then how to say it in Latin letters. For a conversation, say **"be my interpreter between English and Hindi"**: every message is translated into the other language and nothing else happens, with tools off, no offers, no jokes, and nothing remembered. "Stop interpreting" ends it.
+- **Voice.** The speaking style tells the voice to speak Hindi like a native speaker. In private mode the macOS voice for Devanagari is `SUTRA_LOCAL_VOICE_HI` (default Lekha), and local speech recognition needs a multilingual model for Hindi: `SUTRA_LOCAL_STT_MODEL=small` (the default `base.en` is English only) and optionally `SUTRA_LOCAL_STT_LANGUAGE=hi`. Cloud recognition detects the language when `SUTRA_LANGUAGE` is left empty.
+- **Safety nets.** The heavy-topic, low-mood, listening-mode and crisis wording has Hindi and Hinglish phrases (the crisis note adds India's Tele-MANAS 14416 and 112 alongside 988 and 911), and humor is never offered on a Hindi turn. As with English these are phrase lists, so unusual wording can be missed.
+
+Not translated: the longer system messages (they are written by the model in your language anyway), research and offer teasers (the model words most of them), and humor.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_LOCAL_VOICE_HI` | `Lekha` | macOS voice used for Devanagari text in private mode |
+| `SUTRA_LOCAL_STT_LANGUAGE` | automatic | language for local speech recognition (use a multilingual model) |
+| `SUTRA_LANGUAGE` | automatic | language hint for cloud recognition; leave empty to switch freely |

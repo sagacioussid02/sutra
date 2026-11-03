@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import unicodedata
 
 from .model import IntentModel
 from .prompts import load_prompt
@@ -28,6 +29,12 @@ LABELS = (AFFIRM, DENY, MODIFY, UNCLEAR)
 # phrase belongs here only if it can never mean anything but yes or no.
 AFFIRMATIVES = frozenset(
     {
+        # Hindi and Hinglish: only what can never mean anything but yes. "theek hai" (fine, reluctantly?),
+        # "ji" alone (pardon?), "accha" and anything with "lekin" (but) are left to the classifier on purpose.
+        "haan", "han", "haa", "haan ji", "ji haan", "bilkul", "ji bilkul", "haan bilkul", "kar do", "kardo",
+        "haan kar do", "haan kardo", "karo", "kar dijiye", "haan karo",
+        "हाँ", "हां", "हा", "हाँ जी", "हां जी", "जी हाँ", "जी हां", "बिल्कुल", "जी बिल्कुल", "हाँ बिल्कुल",
+        "हां बिल्कुल", "कर दो", "हाँ कर दो", "हां कर दो", "करो", "कर दीजिए", "हाँ करो", "हां करो",
         "yes",
         "yeah",
         "yep",
@@ -45,6 +52,8 @@ AFFIRMATIVES = frozenset(
 )
 NEGATIVES = frozenset(
     {
+        "nahi", "nahin", "nhi", "nahi nahi", "mat karo", "nahi karo", "rehne do", "rahne do", "nahi chahiye",
+        "नहीं", "नही", "नहीं नहीं", "मत करो", "नहीं करो", "रहने दो", "नहीं चाहिए",
         "no",
         "nope",
         "nah",
@@ -62,12 +71,12 @@ NEGATIVES = frozenset(
     }
 )
 
-_NON_WORD = re.compile(r"[^a-z0-9\s]")
+_NON_WORD = re.compile(r"[^a-z0-9\u0900-\u0963\u0966-\u097f\s]")  # keeps Devanagari, drops its danda
 _SPACES = re.compile(r"\s+")
 
 
 def normalize(text: str) -> str:
-    text = text.lower().replace("'", "").replace("’", "")
+    text = unicodedata.normalize("NFC", text).lower().replace("'", "").replace("’", "")
     text = _NON_WORD.sub(" ", text)
     return _SPACES.sub(" ", text).strip()
 

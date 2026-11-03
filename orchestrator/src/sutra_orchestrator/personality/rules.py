@@ -20,12 +20,22 @@ _UPSET = re.compile(
     r"this is so|why (?:won't|can't|doesn't|isn't)|so slow|useless)\b",
     re.IGNORECASE,
 )
+# The same nets in Hindi and Hinglish. \b does not work beside Devanagari vowel signs, so explicit edges.
+_ND, _NA = r"(?<![\u0900-\u097f\w])", r"(?![\u0900-\u097f\w])"
+_HEAVY_HI = re.compile(
+    _ND + r"(?:bimaar\w*|bimari|बीमार\w*|बीमारी|aspatal|अस्पताल|maut|मौत|mrityu|मृत्यु|nidhan|निधन|karz\w*|कर्ज़\w*|कर्ज\w*|"
+    r"talaak|तलाक|jhagda|झगड़ा|adalat|अदालत|vakeel|वकील|sadma|सदमा|paise ki tangi|पैसे की तंगी|marna|मरना|"
+    r"saans ki takleef|कैंसर|cancer|operation|ऑपरेशन)" + _NA, re.IGNORECASE)
+_UPSET_HI = re.compile(
+    _ND + r"(?:pareshan\w*|परेशान\w*|udaas|उदास|gussa|गुस्सा|tang aa gaya|तंग आ|thak gaya|थक गया|thak gayi|थक गई|"
+    r"bura lag\w*|बुरा लग\w*|ghabra\w*|घबरा\w*|dukhi|दुखी|chidh\w*|चिढ़\w*|bekaar|बेकार|nafrat|नफ़रत|nafrat)" + _NA,
+    re.IGNORECASE)
 QUIET_TURNS = 3  # after something heavy or upsetting, this many more turns stay serious
 
 
 def heavy(text: str) -> bool:
-    return bool(_HEAVY.search(text))
+    return bool(_HEAVY.search(text) or _HEAVY_HI.search(text))
 
 
 def upset(text: str) -> bool:
-    return bool(_UPSET.search(text))
+    return bool(_UPSET.search(text) or _UPSET_HI.search(text))

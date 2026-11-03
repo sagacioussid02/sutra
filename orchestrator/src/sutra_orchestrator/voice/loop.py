@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..classifier import AFFIRM, DENY
+from ..i18n import detect, heard as heard_line, localize
 from ..orchestrator import Orchestrator
 from .types import Engines, Recorder, Transcript, VoiceError
 
@@ -407,7 +408,7 @@ class VoiceSession:
         if lane.pending is not None:
             if not await self._confirmation_ok(lane, text, transcript.confidence):
                 return True, None
-            await self._say(f"I heard: {text}.")
+            await self._say(heard_line(text, detect(text)))
         elif not text:
             self._out("  I didn't catch any words.")
             return False, None
@@ -462,9 +463,9 @@ class VoiceSession:
             if lane is self._awaiting:
                 self._awaiting = None
             self._out("  dropped the pending action; nothing was done")
-            await self._say("Okay, I'll leave that for now. Nothing was done.")
+            await self._say(localize("Okay, I'll leave that for now. Nothing was done.", detect(text)))
         else:
-            await self._say("Sorry, I didn't catch that. Was that a yes or a no?")
+            await self._say(localize("Sorry, I didn't catch that. Was that a yes or a no?", detect(text)))
         return False
 
     # ------------------------------------------------------------- doing the work

@@ -38,7 +38,9 @@ from typing import Any, Protocol
 from .agents import DELEGATE_TOOL, AgentService, Findings
 from .graph import GraphService
 from .interests import InterestService
+from . import translate
 from .feeds import FeedService
+from .i18n import detect, localize, reask
 from .life import LifeService, LifeTurn, engaged, refuses
 from .offers import OffersService, OpenOffer, is_deferral
 from .personality import PersonalityService
@@ -208,6 +210,8 @@ class Orchestrator:
         self._life = life
         self._feeds = feeds
         self._life_turn = LifeTurn()
+        self._lang = "en"
+        self._interpreting = False
         self._open_offer: OpenOffer | None = None
         self._open_offer_at: datetime | None = None
         self.last_activity: datetime = (now or (lambda: datetime.now(timezone.utc)))()
@@ -258,6 +262,7 @@ class Orchestrator:
             log.debug("session closed with a pending action; dropping it")
         self._pending = None
         self._history = []
+        self._interpreting = False
         offer, self._open_offer = self._open_offer, None
         if offer is not None and self._offers is not None:
             self._offers.resolve(offer, "ignored")  # asked, and the user left without answering
@@ -403,7 +408,10 @@ class Orchestrator:
         self.last_activity = self._now()
         if self._personality is not None:
             self._personality.start_reaction(text)  # how did they take the last joke? read beside this turn
+        self._lang = detect(text)
         self._life_turn = self._life.on_user_text(text) if self._life is not None else LifeTurn()
+        if self._interpreting:
+            self._life_turn = LifeTurn(private=True)  # translated text is not a topic worth remembering
         turn = _Turn()
         extra_system = ""
         reply: str | None = None
@@ -421,6 +429,8 @@ class Orchestrator:
         if reply is None and self._pending is not None and self._speaker_may_confirm(speaker_id):
             reply, extra_system = await self._handle_pending(text, turn)
         if reply is None:
+            reply = self._interpreter_switch(text)
+        if reply is None and not self._interpreting:
             # "Remind me ..." is handled deterministically before any model
             # call: the time is parsed by fixed patterns in code, never by
             # the model, and an unparseable time gets a clarification reply
@@ -428,6 +438,8 @@ class Orchestrator:
             # still takes precedence over a reminder request.
             reply = self._try_reminder(text)
         if reply is None:
+            if self._interpreting:
+                extra_system = (extra_system + "\n\n" if extra_system else "") + translate.NOTE
             reply = await self._run_turn(text, turn, extra_system, speaker_id, low_confidence, on_text)
             ordinary = True
 
@@ -462,8 +474,9 @@ class Orchestrator:
                 return None, ""
             if refuses(text):
                 self._offers.resolve(offer, "declined")
-                self._history.append([_text_msg("user", text), _text_msg("assistant", CHECKIN_REFUSED_REPLY)])
-                return CHECKIN_REFUSED_REPLY, ""
+                said = localize(CHECKIN_REFUSED_REPLY, self._lang)
+                self._history.append([_text_msg("user", text), _text_msg("assistant", said)])
+                return said, ""
             if engaged(offer.detail, text):
                 self._offers.resolve(offer, "accepted")
                 return None, _CHECKIN_NOTE.format(question=offer.teaser)
@@ -473,8 +486,9 @@ class Orchestrator:
         if is_deferral(text):
             self._offers.resolve(offer, "deferred")
             if short:
-                self._history.append([_text_msg("user", text), _text_msg("assistant", OFFER_DEFERRED_REPLY)])
-                return OFFER_DEFERRED_REPLY, ""
+                said = localize(OFFER_DEFERRED_REPLY, self._lang)
+                self._history.append([_text_msg("user", text), _text_msg("assistant", said)])
+                return said, ""
             return None, ""
         try:
             label = await self._classifier.classify(offer.description, text)
@@ -492,10 +506,25 @@ class Orchestrator:
             return None, ""
         if label == DENY and short:
             self._offers.resolve(offer, "declined")
-            self._history.append([_text_msg("user", text), _text_msg("assistant", OFFER_DECLINED_REPLY)])
-            return OFFER_DECLINED_REPLY, ""
+            said = localize(OFFER_DECLINED_REPLY, self._lang)
+            self._history.append([_text_msg("user", text), _text_msg("assistant", said)])
+            return said, ""
         self._offers.resolve(offer, "declined" if label == DENY else "ignored")
         return None, ""
+
+    def _interpreter_switch(self, text: str) -> str | None:
+        """Start or stop interpreter mode on an explicit phrase. Returns the fixed reply, or None."""
+        hi = self._lang == "hi"
+        if self._interpreting and translate.is_stop(text):
+            self._interpreting = False
+            reply = translate.STOPPED_HI if hi else translate.STOPPED
+        elif not self._interpreting and self._pending is None and translate.is_start(text):
+            self._interpreting = True
+            reply = translate.STARTED_HI if hi else translate.STARTED
+        else:
+            return None
+        self._history.append([_text_msg("user", text), _text_msg("assistant", reply)])
+        return reply
 
     def _try_reminder(self, text: str) -> str | None:
         """Set a reminder from a "remind me ..." utterance, if it is one.
@@ -562,12 +591,9 @@ class Orchestrator:
         if pending.reasks > self._reask_limit:
             return self._finish_fixed(text, GAVE_UP_REPLY, turn, "dropped"), ""
         if self._spoken_reasks:
-            reply = "Sorry, I didn't quite get that. Was that a yes or a no?"
+            reply = localize("Sorry, I didn't quite get that. Was that a yes or a no?", self._lang)
         else:
-            reply = (
-                f"Sorry, I wasn't sure what you meant. {pending.description} "
-                "Should I go ahead? Please say yes or no."
-            )
+            reply = reask(pending.description, self._lang)
         self._history.append([_text_msg("user", text), _text_msg("assistant", reply)])
         return reply, ""
 
@@ -575,6 +601,7 @@ class Orchestrator:
         """End a turn with a fixed reply, clearing the pending action."""
         self._pending = None
         turn.confirmation = confirmation
+        reply = localize(reply, self._lang)
         self._history.append([_text_msg("user", text), _text_msg("assistant", reply)])
         return reply
 
@@ -701,7 +728,8 @@ class Orchestrator:
             # Code decides whether a light touch of humor is even allowed; the note only invites it.
             humor = self._personality.plan(
                 text, action_pending=self._pending is not None,
-                has_note=bool(extra_system or life_note), low_confidence=low_confidence,
+                # Humor has no Hindi tuning yet, so a Hindi turn never gets any.
+                has_note=bool(extra_system or life_note) or self._lang == "hi", low_confidence=low_confidence,
             )
         first_system = f"{system}\n\n{humor.note}" if humor is not None else system
 
@@ -719,6 +747,7 @@ class Orchestrator:
                 system=system if turn.tools else first_system,  # humor only before any tool call
                 messages=self._flat_history() + msgs,
                 tools=tools,
+                **({"allow_tools": False} if self._interpreting else {}),  # text to translate is never a command
             )
             log.debug("model call took %.2fs", time.perf_counter() - started)
             msgs.append({"role": "assistant", "content": response.content})

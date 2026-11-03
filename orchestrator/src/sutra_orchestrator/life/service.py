@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from ..i18n import detect
 from ..model import StructuredModel
 from ..offers import OffersService
 from ..offers.store import Signal
@@ -199,7 +200,8 @@ class LifeService:
             self._listen_left = listening.LISTEN_TURNS
         if self._listen_left > 0:
             self._listen_left -= 1
-            note = listening.LISTEN_NOTE + ("\n\n" + listening.CRISIS_NOTE if crisis else "")
+            crisis_note = listening.CRISIS_NOTE + (listening.CRISIS_NOTE_HI_EXTRA if detect(text) == "hi" else "")
+            note = listening.LISTEN_NOTE + ("\n\n" + crisis_note if crisis else "")
             return LifeTurn(note=note, private=True)
         self._maybe_wellbeing(text)
         return LifeTurn()

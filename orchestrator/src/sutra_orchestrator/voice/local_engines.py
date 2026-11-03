@@ -7,19 +7,22 @@ import io
 import math
 import wave
 
+from ..i18n import DEVANAGARI
 from .types import Transcript, VoiceError
 
 
 class SaySpeaker:
     """macOS ``say``. Text goes over stdin, never as an argument."""
 
-    def __init__(self, voice: str = "") -> None:
+    def __init__(self, voice: str = "", hindi_voice: str = "Lekha") -> None:
         self._voice = voice
+        self._hindi_voice = hindi_voice
 
     async def say(self, text: str) -> None:
         if not text.strip():
             return
-        args = ["say"] + (["-v", self._voice] if self._voice else [])
+        voice = self._hindi_voice if self._hindi_voice and DEVANAGARI.search(text) else self._voice
+        args = ["say"] + (["-v", voice] if voice else [])
         try:
             proc = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.PIPE)
         except FileNotFoundError:
@@ -40,8 +43,9 @@ def _wav_to_float32(wav: bytes):
 
 
 class FasterWhisperTranscriber:
-    def __init__(self, model_size: str = "base.en") -> None:
+    def __init__(self, model_size: str = "base.en", language: str | None = None) -> None:
         self._size = model_size
+        self._language = language or None  # None: detect it (needs a multilingual model, not base.en)
         self._model = None
 
     def _load(self):
@@ -57,7 +61,7 @@ class FasterWhisperTranscriber:
         return self._model
 
     def _run(self, wav: bytes) -> Transcript:
-        segments, _info = self._load().transcribe(_wav_to_float32(wav), beam_size=1)
+        segments, _info = self._load().transcribe(_wav_to_float32(wav), beam_size=1, language=self._language)
         segs = list(segments)
         text = " ".join(s.text.strip() for s in segs).strip()
         if not text:

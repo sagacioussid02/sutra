@@ -7,6 +7,13 @@ Labels:
 - modify: the user wants something different, or agrees only with a change, or asks for something else entirely. Examples: "yes but make it two hundred", "actually use my savings account instead", "what's my balance first?", "tell me about my debts".
 - unclear: you cannot tell whether the user is agreeing. Examples: "hmm", "I guess", "maybe", "wait", "what?", a reply that is hard to follow.
 
+The user may reply in Hindi, in Hinglish (Hindi in Latin letters), or mix languages. Read them the same way as English:
+
+- affirm: "haan", "haan kar do", "bilkul", "हाँ, कर दो". deny: "nahi", "mat karo", "नहीं", "रहने दो".
+- modify: "haan lekin 300 kar do" (yes, but 300), "pehle balance batao" (first tell me the balance).
+- unclear: "pata nahi" (I don't know: this is not a refusal and not agreement), "theek hai, dekhte hain" (okay, we'll see), "ruko" (wait), "haan haan, ruko" (yes yes, wait), "kya?" (what?), "haan?" said as a question.
+- A reply that contradicts itself in any language ("haan nahi nahi") is unclear. "Nahi" inside a longer sentence is not automatically a refusal: read the whole sentence.
+
 Rules:
 
 - Choose affirm only when the agreement is plain and unconditional. Agreement together with any change or condition is modify, not affirm.
