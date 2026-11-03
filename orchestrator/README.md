@@ -197,6 +197,77 @@ reply = await orchestrator.respond("what do I owe?")   # str in, str out
 the same way the REPL does. See `src/sutra_orchestrator/__main__.py` for how
 it is assembled.
 
+## Voice (push-to-talk)
+
+Talk to Sutra with your laptop microphone.
+
+```sh
+uv pip install -e ".[voice]"          # cloud speech (OpenAI) + microphone
+uv pip install -e ".[voice-local]"    # also: local Whisper for private mode
+.venv/bin/python -m sutra_orchestrator.voice
+```
+
+Press Enter once to start. It stops listening when you stop talking (about
+1.2 seconds of quiet), so there is nothing to press when you're done. After it
+answers it keeps listening for your next sentence, and returns to idle when you
+stay quiet for a few seconds, so you can just keep talking. `p` switches
+between cloud and private mode; `q` quits. macOS will ask for microphone access for
+your terminal the first time.
+
+### Working in the background
+
+It keeps listening while it works. If a request is slow it says so once ("I'm
+still on it, ask me something else if you like"). If you do speak, the request
+carries on as a background job and your new question is answered right away.
+At most two jobs run at once (`SUTRA_MAX_BACKGROUND`); beyond that it tells you
+it is busy.
+
+It never speaks a finished result unprompted. It asks first ("I've got an
+answer to your earlier request... want it now?") and says the result only
+after you agree. Say "not right now" and it keeps it; ask "what came back?" to
+hear it later. If a background job needs your go-ahead for an action that
+changes something, it asks about that specific action, and only one such
+question is open at a time.
+
+Not built yet: cancelling a job by voice ("never mind that") and interrupting
+while it is *speaking* (that needs echo cancellation, see the design notes).
+
+**Cloud mode** (default when `OPENAI_API_KEY` is set) uses OpenAI
+`gpt-4o-transcribe` to hear you and `gpt-4o-mini-tts` to speak. Your recorded
+audio and the text of each spoken reply are sent to OpenAI.
+
+**Private mode** (press `p`, or set `SUTRA_VOICE_MODE=private`) uses local
+Whisper and the macOS `say` voice. No audio and no spoken text goes to OpenAI.
+What private mode does *not* cover: the words you say are still passed to the
+Claude model as text, as in the typed REPL, and memory still stores what you
+tell it. Use `SUTRA_MEMORY=off` if you want none of that kept.
+
+If `OPENAI_API_KEY` is not set, voice starts in private mode.
+
+| Variable | Meaning |
+|---|---|
+| `OPENAI_API_KEY` | Enables cloud mode. Put it in `orchestrator/.env`. |
+| `SUTRA_ASSISTANT_NAME` | The name it answers to and thinks of itself as. Default `Sutra`. |
+| `SUTRA_VOICE_MODE` | `cloud` (default) or `private` at start. |
+| `SUTRA_STT_MODEL` / `SUTRA_TTS_MODEL` / `SUTRA_TTS_VOICE` | Default `gpt-4o-transcribe`, `gpt-4o-mini-tts`, `coral`. |
+| `SUTRA_LANGUAGE` | Optional language hint for transcription, e.g. `en`. |
+| `SUTRA_LOCAL_STT_MODEL` | Local Whisper size. Default `base.en`. |
+| `SUTRA_LOCAL_VOICE` | Optional macOS `say` voice name. |
+| `SUTRA_MIN_CONFIDENCE` | Below this a reply to a held action is not acted on. Default 0.5. Local clear speech scored about 0.67, so tune it by testing. |
+| `SUTRA_AUTO_STOP` | `on` (default): stop when you stop talking. `off`: press Enter to stop. |
+| `SUTRA_SILENCE_MS` | How long a quiet gap ends your turn. Default 1200. Raise it if it cuts you off mid-thought. |
+| `SUTRA_NO_SPEECH_MS` | How long to wait for you to start before going idle. Default 6000. |
+| `SUTRA_CONVERSATION` | `on` (default): keep listening after each reply. `off`: one turn per Enter. |
+| `SUTRA_MAX_BACKGROUND` | Background jobs allowed at once. Default 2. |
+| `SUTRA_WAIT_NOTICE_DELAY` | Seconds before it says it is still working and invites another question. Default 4. |
+| `SUTRA_FILLER_DELAY` | Seconds before a slow reply gets a spoken "hmm, one sec". Default 1.5. |
+| `SUTRA_RECORD_AUDIO_DIR` | If set, each recording is saved there. Off by default. |
+
+A doubtful transcript (empty, or under the confidence threshold) never reaches
+the confirmation path: it is re-asked and the action stays held, then dropped
+after the re-ask limit. What it heard is printed, and spoken back before it
+acts on your answer to a held action.
+
 ## Tests
 
 ```sh

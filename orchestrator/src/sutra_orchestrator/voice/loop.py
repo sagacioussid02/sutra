@@ -1,0 +1,480 @@
+"""The voice loop: listen, ``respond()``, speak, and keep listening while work runs.
+
+While a request is being worked on the loop stays listening. If you speak, the
+request keeps going as a background job (a separate conversation lane) and your new
+question is answered right away. Finished jobs are never announced unprompted: the
+loop asks first, and speaks the result only after you agree.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from collections import deque
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from ..classifier import AFFIRM, DENY
+from ..orchestrator import Orchestrator
+from .types import Engines, Recorder, Transcript, VoiceError
+
+DEFAULT_FILLERS = (
+    "Hmm, one sec.",
+    "Okay, let me look.",
+    "Right, give me a moment.",
+    "Yeah, just checking.",
+)
+WAIT_NOTICES = (
+    "This one's taking a bit. I'm still on it, so feel free to ask me something else.",
+    "Still working on that. Ask me something else if you like, and I'll come back to this.",
+)
+BUSY_LINE = "I'm already working on a couple of things. Give me a moment."
+CAME_BACK_PHRASES = ("came back", "any update", "anything back", "is it done", "done yet")
+
+
+@dataclass
+class VoiceSettings:
+    min_confidence: float = 0.5
+    reask_limit: int = 2
+    filler_delay: float = 1.5
+    wait_notice_delay: float = 4.0
+    max_background: int = 2
+    conversation: bool = True
+    fillers: tuple[str, ...] = DEFAULT_FILLERS
+    record_dir: Path | None = None
+
+
+@dataclass
+class Job:
+    label: str
+    utterance: str
+    lane: Orchestrator
+    task: asyncio.Future
+
+
+@dataclass
+class Notice:
+    job: Job
+    kind: str  # "result", "confirm", or "error"
+    reply: str
+    declined: bool = False
+
+
+@dataclass
+class _State:
+    private: bool
+    doubtful: int = 0
+    filler_index: int = 0
+    notice_index: int = 0
+
+
+def _label(utterance: str) -> str:
+    words = utterance.strip().rstrip("?.!").split()
+    return " ".join(words[:8])
+
+
+class VoiceSession:
+    def __init__(
+        self,
+        orchestrator: Orchestrator,
+        recorder: Recorder,
+        cloud: Engines | None,
+        local: Engines,
+        settings: VoiceSettings,
+        *,
+        start_private: bool = False,
+        read: Callable[[str], Awaitable[str]] | None = None,
+        out: Callable[[str], None] = print,
+    ) -> None:
+        self._fg = orchestrator
+        self._recorder = recorder
+        self._cloud = cloud
+        self._local = local
+        self._s = settings
+        self._read = read or _read_line
+        self._out = out
+        self._state = _State(private=start_private or cloud is None)
+        self._speak_lock = asyncio.Lock()
+        self._background: set[asyncio.Task] = set()
+        self._jobs: list[Job] = []
+        self._ready: deque[Notice] = deque()
+        self._offer: Notice | None = None
+        self._awaiting: Orchestrator | None = None  # lane whose held action the user is answering
+        self._notify = asyncio.Event()
+        self._read_task: asyncio.Future | None = None
+
+    @property
+    def engines(self) -> Engines:
+        return self._local if self._state.private else self._cloud  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------ main loop
+
+    async def run(self) -> None:
+        self._recorder.check()
+        how = "it stops when you stop talking" if self._recorder.auto_stop else "Enter again to stop"
+        self._out(
+            f"Voice is on ({self.engines.label}). Enter = start talking ({how}), "
+            "p = switch private/cloud, q = quit."
+        )
+        while True:
+            try:
+                cmd = (await self._next_command()).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if cmd in ("q", "quit", "exit"):
+                break
+            if cmd == "p":
+                await self._toggle_private()
+                continue
+            if cmd:
+                continue
+            await self._conversation()
+
+    async def _next_command(self) -> str:
+        """Wait for a typed command, but speak up (after asking) if background work finishes."""
+        if self._read_task is None:
+            self._read_task = asyncio.ensure_future(self._read("[Enter to talk]> "))
+        while True:
+            waiter = asyncio.ensure_future(self._notify.wait())
+            await asyncio.wait({self._read_task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+            waiter.cancel()
+            if self._read_task.done():
+                task, self._read_task = self._read_task, None
+                return task.result()
+            self._notify.clear()
+            if self._next_offerable() is not None:
+                await self._conversation(announce=True)
+
+    async def _conversation(self, announce: bool = False) -> None:
+        """Take turns. In conversation mode keep listening after each reply until you go quiet."""
+        try:
+            if announce:
+                await self._maybe_offer()
+            carry: Transcript | None = None
+            while True:
+                try:
+                    answered, carry = await self._turn(carry)
+                except VoiceError as exc:
+                    self._out(f"  {exc}")
+                    return
+                if carry is not None:
+                    continue
+                if not (answered and self._s.conversation and self._recorder.auto_stop):
+                    return
+        finally:
+            self._recorder.release()  # nothing is captured while idle
+            if self._offer is not None:  # asked, but got no answer: keep it for later
+                self._offer.declined = True
+                self._offer = None
+
+    def _in_background(self, coro) -> None:
+        task = asyncio.ensure_future(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def close(self) -> None:
+        """Wait for background jobs and memory work so nothing is lost on exit."""
+        pending = [j.task for j in self._jobs]
+        if pending:
+            self._out(f"  waiting for {len(pending)} background job(s) to finish...")
+            await asyncio.gather(*pending, return_exceptions=True)
+        if self._background:
+            await asyncio.gather(*self._background, return_exceptions=True)
+
+    async def _toggle_private(self) -> None:
+        if self._cloud is None:
+            self._out("  Cloud voice isn't set up (no OPENAI_API_KEY), so this is already private.")
+            return
+        self._state.private = not self._state.private
+        label = self.engines.label
+        self._out(f"  Now using {label}.")
+        await self._say("Okay, switched.")
+
+    # ----------------------------------------------------------------------- listen
+
+    async def _listen_once(self) -> Transcript | None:
+        """Record one utterance and transcribe it. None means nothing was heard."""
+        self._recorder.start()
+        try:
+            if self._recorder.auto_stop:
+                await asyncio.to_thread(self._recorder.wait_done)
+            else:
+                self._out("  listening... press Enter when you're done")
+                await self._read("")
+        finally:
+            wav = self._recorder.stop()
+        if not wav:
+            return None
+        self._save_audio(wav)
+        return await self.engines.transcriber.transcribe(wav)
+
+    async def _stop_listening(self, listen: asyncio.Future | None) -> Transcript | None:
+        """Abort a recording in progress (so we can speak). Returns anything already heard."""
+        if listen is None:
+            return None
+        self._recorder.cancel()
+        return await listen
+
+    def _is_interruption(self, t: Transcript | None) -> bool:
+        if t is None or t.confidence < self._s.min_confidence:
+            return False
+        return len(t.text.split()) >= 2
+
+    # ------------------------------------------------------------------------ turn
+
+    async def _turn(self, carry: Transcript | None = None) -> tuple[bool, Transcript | None]:
+        """One exchange. Returns (answered, utterance that interrupted it, if any)."""
+        transcript = carry
+        if transcript is None:
+            if self._recorder.auto_stop:
+                self._out("  listening...")
+            transcript = await self._listen_once()
+        if transcript is None:
+            self._out("  I didn't hear anything.")
+            return False, None
+        text = transcript.text.strip()
+        if text:
+            self._out(f"you> {text}")
+
+        if self._offer is not None and text and await self._handle_offer(text):
+            return True, None
+        if text and self._asks_what_came_back(text) and await self._reoffer():
+            return True, None
+
+        lane = self._awaiting or self._fg
+        if lane.pending is not None:
+            if not await self._confirmation_ok(lane, text, transcript.confidence):
+                return True, None
+            await self._say(f"I heard: {text}.")
+        elif not text:
+            self._out("  I didn't catch any words.")
+            return False, None
+
+        reply, interrupted = await self._respond(lane, text)
+        if reply is not None:
+            self._out(f"sutra> {reply}")
+            await self._say(reply)
+            # Memory work (like extracting what you said) must not delay listening.
+            self._in_background(lane.flush())
+            self._show_pending(lane)
+            if lane is self._awaiting and lane.pending is None:
+                self._awaiting = None
+        if interrupted is None:
+            await self._maybe_offer()  # a natural gap: now is the time to ask
+        return True, interrupted
+
+    def _show_pending(self, lane: Orchestrator) -> None:
+        pending = lane.pending
+        if pending is not None:
+            self._out(f"  pending: {pending.description}")
+            self._out(f"  expires: {pending.expires_at.astimezone().strftime('%H:%M:%S')}")
+
+    async def _confirmation_ok(self, lane: Orchestrator, text: str, confidence: float) -> bool:
+        """Gate a reply to a held action. A doubtful transcript never reaches respond()."""
+        if text and confidence >= self._s.min_confidence:
+            self._state.doubtful = 0
+            return True
+        self._state.doubtful += 1
+        if self._state.doubtful > self._s.reask_limit:
+            self._state.doubtful = 0
+            lane.cancel_pending()
+            if lane is self._awaiting:
+                self._awaiting = None
+            self._out("  dropped the pending action; nothing was done")
+            await self._say("Okay, I'll leave that for now. Nothing was done.")
+        else:
+            await self._say("Sorry, I didn't catch that. Was that a yes or a no?")
+        return False
+
+    # ------------------------------------------------------------- doing the work
+
+    async def _respond(
+        self, lane: Orchestrator, text: str
+    ) -> tuple[str | None, Transcript | None]:
+        """Run the request. Returns (reply or None if detached, utterance that interrupted it)."""
+        if not self._recorder.auto_stop:
+            return await self._respond_with_filler(lane, text), None
+
+        loop = asyncio.get_running_loop()
+        work = asyncio.ensure_future(lane.respond(text))
+        started = loop.time()
+        timers: list[tuple[float, str]] = []
+        if self._s.filler_delay > 0 and self._s.fillers:
+            timers.append((self._s.filler_delay, "filler"))
+        if self._s.wait_notice_delay > 0:
+            timers.append((self._s.wait_notice_delay, "notice"))
+        timers.sort()
+        listen: asyncio.Future | None = None
+        while True:
+            if listen is None and not work.done():
+                listen = asyncio.ensure_future(self._listen_once())
+            wait_for = {work} | ({listen} if listen else set())
+            timeout = max(0.0, timers[0][0] - (loop.time() - started)) if timers else None
+            done, _ = await asyncio.wait(wait_for, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+
+            if work in done:
+                late = await self._stop_listening(listen)
+                return work.result(), (late if self._is_interruption(late) else None)
+
+            heard: Transcript | None = None
+            if listen is not None and listen in done:
+                heard, listen = listen.result(), None
+            elif not done:  # a timer fired: stop recording so the mic doesn't hear us speak
+                heard = await self._stop_listening(listen)
+                listen = None
+
+            if self._is_interruption(heard):
+                if len(self._jobs) >= self._s.max_background:
+                    await self._say(BUSY_LINE)
+                else:
+                    self._detach(lane, text, work)
+                    return None, heard
+            if not done:
+                await self._say(self._timer_line(timers.pop(0)[1]))
+
+    def _timer_line(self, kind: str) -> str:
+        if kind == "filler":
+            line = self._s.fillers[self._state.filler_index % len(self._s.fillers)]
+            self._state.filler_index += 1
+            return line
+        line = WAIT_NOTICES[self._state.notice_index % len(WAIT_NOTICES)]
+        self._state.notice_index += 1
+        return line
+
+    async def _respond_with_filler(self, lane: Orchestrator, text: str) -> str:
+        """Press-Enter mode cannot listen while working, so only the short filler applies."""
+        started = False
+
+        async def filler() -> None:
+            nonlocal started
+            await asyncio.sleep(self._s.filler_delay)
+            if not self._s.fillers:
+                return
+            async with self._speak_lock:
+                started = True
+                await self.engines.speaker.say(self._timer_line("filler"))
+
+        task = asyncio.create_task(filler())
+        try:
+            return await lane.respond(text)
+        finally:
+            if started:
+                try:
+                    await task
+                except VoiceError:
+                    pass
+            else:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+    # ---------------------------------------------------------- background jobs
+
+    def _detach(self, lane: Orchestrator, utterance: str, work: asyncio.Future) -> None:
+        job = Job(_label(utterance), utterance, lane, work)
+        self._jobs.append(job)
+        work.add_done_callback(lambda t, j=job: self._job_done(j, t))
+        if lane is self._fg:
+            self._fg = lane.fork()  # the main conversation carries on, without the unfinished request
+        elif lane is self._awaiting:
+            self._awaiting = None
+        self._out(f"  (still working on: {job.label}. Carrying on with your new question.)")
+
+    def _job_done(self, job: Job, task: asyncio.Future) -> None:
+        if job in self._jobs:
+            self._jobs.remove(job)
+        if task.cancelled():
+            return  # shutting down: there is nobody to tell
+        try:
+            reply = task.result()
+            kind = "confirm" if job.lane.pending is not None else "result"
+        except Exception:
+            reply, kind = "That didn't work out.", "error"
+        self._in_background(job.lane.flush())
+        self._ready.append(Notice(job, kind, reply))
+        self._notify.set()
+
+    def _next_offerable(self, include_declined: bool = False) -> Notice | None:
+        busy = self._fg.pending is not None or self._awaiting is not None
+        for n in self._ready:
+            if n.declined and not include_declined:
+                continue
+            if n.kind == "confirm" and busy:
+                continue  # only one action may await confirmation at a time
+            return n
+        return None
+
+    async def _maybe_offer(self, include_declined: bool = False) -> bool:
+        if self._offer is not None:
+            return False
+        notice = self._next_offerable(include_declined)
+        if notice is None:
+            return False
+        self._offer = notice
+        label = notice.job.label
+        if notice.kind == "confirm":
+            line = f"I need your go-ahead on something for your earlier request, {label}. Want to hear it?"
+        elif notice.kind == "error":
+            line = f"Your earlier request, {label}, didn't work out. Want the details?"
+        else:
+            line = f"By the way, I've got an answer to your earlier request, {label}. Want it now?"
+        self._out(f"sutra> {line}")
+        await self._say(line)
+        return True
+
+    async def _handle_offer(self, text: str) -> bool:
+        """Act on the reply to 'want it now?'. Returns True if the reply was consumed."""
+        notice, self._offer = self._offer, None
+        assert notice is not None
+        label = await self._fg.classify_reply(
+            f"Hear the result of your earlier request: {notice.job.label}", text
+        )
+        if label == AFFIRM:
+            self._ready.remove(notice)
+            self._out(f"sutra> {notice.reply}")
+            await self._say(notice.reply)
+            if notice.kind == "confirm":
+                self._awaiting = notice.job.lane
+                self._show_pending(notice.job.lane)
+            else:
+                self._fg.note_background_result(notice.job.utterance, notice.reply)
+            return True
+        notice.declined = True
+        if label == DENY:
+            await self._say("Okay, later.")
+            return True
+        return False  # something else entirely: treat it as a normal request
+
+    def _asks_what_came_back(self, text: str) -> bool:
+        t = text.lower()
+        return any(p in t for p in CAME_BACK_PHRASES)
+
+    async def _reoffer(self) -> bool:
+        if self._offer is not None:
+            return False
+        if await self._maybe_offer(include_declined=True):
+            return True
+        if self._jobs:
+            await self._say("Still working on it.")
+        else:
+            await self._say("Nothing has come back yet.")
+        return True
+
+    # ------------------------------------------------------------------- helpers
+
+    async def _say(self, text: str) -> None:
+        async with self._speak_lock:
+            try:
+                await self.engines.speaker.say(text)
+            except VoiceError as exc:
+                self._out(f"  {exc}")
+
+    def _save_audio(self, wav: bytes) -> None:
+        if self._s.record_dir is None:
+            return
+        self._s.record_dir.mkdir(parents=True, exist_ok=True)
+        (self._s.record_dir / f"turn-{int(time.time() * 1000)}.wav").write_bytes(wav)
+
+
+async def _read_line(prompt: str) -> str:
+    return await asyncio.to_thread(input, prompt)
