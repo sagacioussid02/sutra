@@ -11,6 +11,8 @@ from typing import Any, Protocol
 
 import anthropic
 
+from .agents.types import StepResult
+
 
 @dataclass
 class ModelResponse:
@@ -95,12 +97,14 @@ class AnthropicModel:
         classifier_model: str,
         *,
         extractor_model: str | None = None,
+        agent_model: str | None = None,
         max_tokens: int = 1024,
     ) -> None:
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._model = model
         self._classifier_model = classifier_model
         self._extractor_model = extractor_model or classifier_model
+        self._agent_model = agent_model or classifier_model
         self._max_tokens = max_tokens
 
     async def complete(
@@ -133,6 +137,39 @@ class AnthropicModel:
                     {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
                 )
         return ModelResponse(content=blocks, stop_reason=response.stop_reason)
+
+    async def research_step(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_searches: int,
+        max_tokens: int,
+    ) -> StepResult:
+        """One request for a research run: the web search server tool plus any allowlisted tools."""
+        all_tools = list(tools)
+        if max_searches > 0:
+            all_tools.append(
+                {"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}
+            )
+        kwargs: dict[str, Any] = {
+            "model": self._agent_model,
+            "max_tokens": max(1, min(max_tokens, 4096)),
+            "system": system,
+            "messages": messages,
+        }
+        if all_tools:
+            kwargs["tools"] = all_tools
+        response = await self._client.messages.create(**kwargs)
+        usage = getattr(response, "usage", None)
+        server = getattr(usage, "server_tool_use", None)
+        return StepResult(
+            content=[b.model_dump(mode="json", exclude_none=True) for b in response.content],
+            stop_reason=response.stop_reason,
+            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+            searches=getattr(server, "web_search_requests", 0) or 0,
+        )
 
     async def classify(self, *, system: str, user: str) -> str:
         response = await self._client.messages.create(

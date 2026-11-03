@@ -323,3 +323,28 @@ key and your running gateway: tuning the system prompt against real finanxe and
 twin results, a multi-session walkthrough of memory, and measuring real per-turn
 latency. Run `--verbose` during that walkthrough; it prints model and tool
 timings for each call.
+
+
+## Research agents
+
+Ask for something that needs the web ("find out what changed in the new tax rules") and Sutra offers to send a researcher. Nothing starts until you say yes. The researcher works in the background, so the conversation carries on, and the answer is announced when it is back (by voice, after asking; in the text client it is printed).
+
+What it can and cannot do:
+
+- It sees only the task, never your conversation, memory or personal data. The model is told not to put personal details in the task.
+- It can use web search and nothing else, unless you list read-only gateway tools in `SUTRA_AGENT_TOOLS`. It can never call memory, reminders, confirm-first tools, or start another agent.
+- What it brings back is treated as untrusted web text. The answer you hear is written by a call with tools turned off, so a page cannot make Sutra act.
+- Limits are enforced in code. Defaults: 5 searches, 5 tool calls, 180 seconds and 8,000 output tokens per run; 3 runs and 60,000 output tokens per day. A run that hits a limit reports what it has and says it is incomplete.
+
+Your task text and its search queries go to Anthropic. Web search may carry its own per-search price; check your Anthropic plan before raising the limits.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_AGENTS` | on | `off` removes the feature |
+| `SUTRA_AGENT_MODEL` | claude-haiku-5-5 | model the researcher uses |
+| `SUTRA_AGENT_TOOLS` | none | comma-separated gateway tool names a run may call (read-only ones only) |
+| `SUTRA_AGENT_MAX_SEARCHES` / `_MAX_TOOL_CALLS` / `_RUN_TOKENS` / `_TIMEOUT` | 5 / 5 / 8000 / 180 | per-run limits |
+| `SUTRA_AGENT_DAILY_RUNS` / `_DAILY_TOKENS` | 3 / 60000 | daily limits |
+| `SUTRA_AGENTS_DIR` | the memory directory | where `agents.db` lives |
+
+Commands in the text client: `/agents` lists recent runs and today's usage, `/agents purge` deletes the record. Runs share the background-job cap (`SUTRA_MAX_BACKGROUND`, default 2 in voice, 2 in text). Quitting cancels a running research run and records it as interrupted.

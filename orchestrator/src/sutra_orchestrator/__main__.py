@@ -16,6 +16,8 @@ from .memstore import SqliteMemory
 from .memstore.commands import MemoryCommands
 from .model import AnthropicModel
 from .orchestrator import Orchestrator
+from .agents import AgentCommands
+from .agents.factory import build_agent_service
 from .reminders import ReminderScheduler, ReminderService, ReminderStore
 from .reminders.commands import ReminderCommands
 from .repl import CommandSet, configure_logging, run_repl
@@ -41,6 +43,7 @@ async def _run(verbose: bool) -> int:
             config.model,
             config.classifier_model,
             extractor_model=config.extractor_model,
+            agent_model=config.agent_model,
         )
         memory: SqliteMemory | None = None
         memory_commands: MemoryCommands | None = None
@@ -66,19 +69,45 @@ async def _run(verbose: bool) -> int:
                 reminder_store,
                 on_deliver=lambda entry: print(f"  reminder: {entry.text}"),
             )
+        agents = None
+        agent_commands = None
+        if config.agents_enabled:
+            agents = build_agent_service(
+                config, model, gateway, lambda: orchestrator.gateway_tools,
+                _memory_dir(config.agents_dir), ZoneInfo(config.reminders_tz),
+            )
+            agent_commands = AgentCommands(agents)
         # Reminder commands first: the memory handler answers every "/"
         # line (including "unknown command"), so it must be tried last.
-        commands = CommandSet(reminder_commands, memory_commands)
+        commands = CommandSet(reminder_commands, agent_commands, memory_commands)
         orchestrator = Orchestrator(
             model=model,
             gateway=gateway,
             classifier=IntentClassifier(model, timeout=config.classifier_timeout),
             memory=memory,
             reminders=reminders,
+            agents=agents,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
         )
+        if agents is not None:
+            def adopt(label: str, task: str, work) -> None:
+                def done(t) -> None:
+                    if t.cancelled():
+                        return
+                    try:
+                        reply = t.result()
+                    except Exception:
+                        reply = "The research didn't work out."
+                    orchestrator.note_background_result(task, reply)
+                    print(f"\nsutra (research: {label})> {reply}")
+
+                work.add_done_callback(done)
+
+            orchestrator.set_research_hooks(
+                lambda: len(orchestrator.research_tasks) < 2, adopt
+            )
         count = await orchestrator.start()
         print(f"Connected to the gateway. {count} tools available. Blank line to quit.")
         if memory is not None:
@@ -94,11 +123,14 @@ async def _run(verbose: bool) -> int:
         finally:
             if reminder_scheduler is not None:
                 await reminder_scheduler.stop()
+            await orchestrator.cancel_research()
             await orchestrator.flush()
             if memory is not None:
                 memory.close()
             if reminder_store is not None:
                 reminder_store.close()
+            if agents is not None:
+                agents.store.close()
     finally:
         await gateway.close()
     return 0
