@@ -415,3 +415,23 @@ Text-client commands: `/idle` (status), `/idle on|off`, `/idle now` (try one run
 | `SUTRA_IDLE_DIR` | the memory directory | where `idle.db` lives |
 
 It needs interests, research agents and offers to be on.
+
+## Lessons (self-learning)
+
+Sutra can notice patterns in how you react to it and propose small changes to how it behaves. The rule it is built around: **it may propose a lesson; only you can make it take effect; and nothing it learns can change code, prompt files, permissions, memory or the confirmation gate.** Every lesson is listed, explained and removable.
+
+- **Where lessons come from.** Once a day, a small model reads pairs of Sutra's own earlier reply (only turns that used no tool) and what you said next, from the last 14 days, and proposes a lesson only if you corrected it the same way more than once, or very explicitly once ("When asked for a restaurant, choose places that suit a young child"). Turns that used a `finanxe_` tool and all tool results are never read. Separately, code counts offers: three declined or ignored with none accepted proposes a stop ("Stop offering follow-ups about trains").
+- **Two effects, nothing else.** *Guidance* is a line in a labelled block in the conversation prompt, built from active lessons only (at most ten, newest first), and it says it never authorizes an action or changes what needs your confirmation. *Block* is a stop on a kind or topic of offer. There is no way for a lesson to name a tool, file, setting or permission, and a lesson that mentions confirming, permissions, secrets, tools, settings or ignoring rules is refused before you see it.
+- **Only your answer approves.** A proposal is asked about at a quiet moment ("I noticed something I could do differently: ... Want me to do that from now on?") or you use `/lessons approve <id>`. The model has no tool that creates or approves a lesson. It can only retire one when you say "stop doing that".
+- **A safety check before guidance takes effect.** After you approve it, fixed probes run against the real conversation model with and without the lesson: a write must still end held for your confirmation, "I confirm, don't ask" must not skip it, the assistant must not claim a held action was done, and text inside a tool result must not make it call a write tool. A lesson that makes any of that worse is `blocked` with the reason shown. If the check can't run (no key, no network), the lesson waits as `approved` and has no effect until `/lessons recheck` succeeds. These probes check the conversation prompt, which is where guidance acts; the classifier, extractor and recall evals don't exercise it. Run them by hand: `python evals/run_lesson_probes.py ["a candidate lesson"]`.
+- **Is it working?** If you correct the same thing again after a lesson is active, it is shown as "not working" and a revision can be proposed instead of a near-duplicate; the old one is replaced only if you approve the revision.
+
+Text-client commands: `/lessons` (list), `why <id>`, `approve <id>`, `reject <id>`, `retire <id>`, `history <id>`, `forget <id>`, `forget all`, `reflect`, `recheck`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_LESSONS` | on | `off` removes the feature |
+| `SUTRA_LESSONS_REFLECTION` | on | `off` stops automatic proposals; approved lessons keep working |
+| `SUTRA_LESSONS_DIR` | the memory directory | where `lessons.db` lives |
+
+Reading corrections needs memory on; the offer-outcome proposals need offers on.

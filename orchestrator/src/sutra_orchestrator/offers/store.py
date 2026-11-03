@@ -164,15 +164,27 @@ class OffersStore:
     def outcome_counts(self, kind: str, since: datetime) -> dict[str, int]:
         rows = self._conn.execute(
             "SELECT outcome, COUNT(*) AS n FROM offers WHERE kind = ? AND created_at >= ?"
-            " AND outcome IN ('accepted', 'deferred', 'declined', 'ignored') GROUP BY outcome",
+            " AND outcome IN ('accepted', 'deferred', 'declined', 'ignored')"
+            " AND (signal_id IS NULL OR signal_id NOT IN (SELECT id FROM signals WHERE source = 'self-learning'))"
+            " GROUP BY outcome",
             (kind, _iso(since)),
         )
         return {r["outcome"]: r["n"] for r in rows}
 
+    def kind_topic_outcomes(self, since: datetime) -> list[tuple[str, str, str]]:
+        rows = self._conn.execute(
+            "SELECT kind, topic, outcome FROM offers WHERE created_at >= ?"
+            " AND outcome IN ('accepted', 'deferred', 'declined', 'ignored')"
+            " AND (signal_id IS NULL OR signal_id NOT IN (SELECT id FROM signals WHERE source = 'self-learning'))",
+            (_iso(since),),
+        )
+        return [(r["kind"], r["topic"], r["outcome"]) for r in rows]
+
     def topic_outcomes(self, since: datetime) -> list[tuple[str, str]]:
         rows = self._conn.execute(
             "SELECT topic, outcome FROM offers WHERE created_at >= ?"
-            " AND outcome IN ('accepted', 'deferred', 'declined', 'ignored')",
+            " AND outcome IN ('accepted', 'deferred', 'declined', 'ignored')"
+            " AND (signal_id IS NULL OR signal_id NOT IN (SELECT id FROM signals WHERE source = 'self-learning'))",
             (_iso(since),),
         )
         return [(r["topic"], r["outcome"]) for r in rows]

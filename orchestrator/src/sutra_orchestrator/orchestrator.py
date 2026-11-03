@@ -32,7 +32,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Protocol
 
 from .agents import DELEGATE_TOOL, AgentService, Findings
 from .graph import GraphService
@@ -114,6 +114,20 @@ _STEP_WORDS = {
 }
 
 
+class LessonSource(Protocol):
+    """What the conversation needs from lessons: a prompt block and a reduce-only tool. Nothing else."""
+
+    def block(self) -> str: ...
+
+    def tools(self) -> list[LocalTool]: ...
+
+
+_LESSON_NOTE = (
+    "The user just agreed to this: {detail}. In one short sentence, say you will keep that in mind "
+    "from now on. Do not repeat it at length."
+)
+
+
 @dataclass
 class PendingAction:
     pending_id: str
@@ -158,6 +172,7 @@ class Orchestrator:
         interests: InterestService | None = None,
         graph: GraphService | None = None,
         offers: OffersService | None = None,
+        lessons: LessonSource | None = None,
         max_tool_calls: int = 6,
         history_turns: int = 20,
         reask_limit: int = 2,
@@ -174,6 +189,7 @@ class Orchestrator:
         self._interests = interests
         self._graph = graph
         self._offers = offers
+        self._lessons = lessons
         self._open_offer: OpenOffer | None = None
         self._open_offer_at: datetime | None = None
         self.last_activity: datetime = (now or (lambda: datetime.now(timezone.utc)))()
@@ -248,6 +264,7 @@ class Orchestrator:
             reminders=self._reminders,
             agents=self._agents,
             interests=self._interests,
+            lessons=self._lessons,
             max_tool_calls=self._max_tool_calls,
             history_turns=self._history_turns,
             reask_limit=self._reask_limit,
@@ -419,6 +436,8 @@ class Orchestrator:
             self._offers.resolve(offer, "accepted")
             if offer.style == "ask" and offer.kind == "followup":
                 return None, _FOLLOWUP_NOTE.format(topic=offer.topic, step=_STEP_WORDS.get(offer.step, "the next step"))
+            if offer.style == "ask" and offer.kind == "timely" and offer.source == "self-learning":
+                return None, _LESSON_NOTE.format(detail=offer.detail)
             if offer.style == "ask" and offer.kind == "timely":
                 return None, _TIMELY_NOTE.format(detail=offer.detail.replace("</untrusted_signal>", ""))
             return None, ""
@@ -608,6 +627,10 @@ class Orchestrator:
                 system += "\n\n" + interests_block
             if self._interests.nudged and self._offers is not None:
                 self._offers.note_nudge()
+        if self._lessons is not None:
+            lessons_block = self._lessons.block()  # active lessons only; data, not authority
+            if lessons_block:
+                system += "\n\n" + lessons_block
         if extra_system:
             system += "\n\n" + extra_system
 
@@ -837,6 +860,8 @@ class Orchestrator:
             tools = [*tools, *self._interests.tools()]
         if self._offers is not None:
             tools = [*tools, *self._offers.tools()]
+        if self._lessons is not None:
+            tools = [*tools, *self._lessons.tools()]
         for tool in tools:
             if tool.name == CONFIRM_TOOL or tool.name in self._gateway_tools:
                 log.warning("ignoring local tool %r: name is reserved or already in use", tool.name)

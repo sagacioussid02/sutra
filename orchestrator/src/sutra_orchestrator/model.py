@@ -208,6 +208,28 @@ STRUCTURED_TOOLS: dict[str, dict[str, Any]] = {
             "required": ["choice"],
         },
     },
+    "lesson_reflect": {
+        "name": "record_lessons",
+        "description": "Record lessons about how the assistant should behave, possibly none.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "evidence": {"type": "array", "items": {"type": "integer"}},
+                            "recurrence_of": {"type": "integer"},
+                        },
+                        "required": ["text", "evidence"],
+                    },
+                }
+            },
+            "required": ["items"],
+        },
+    },
     "judgement": {
         "name": "record_judgement",
         "description": "Decide whether to speak up now, and how.",
