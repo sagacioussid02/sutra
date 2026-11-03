@@ -40,16 +40,38 @@ async def _read_line(prompt: str) -> str:
     return await asyncio.to_thread(input, prompt)
 
 
+class CommandSet:
+    """Several slash-command handlers tried in order.
+
+    Each handler returns the lines to show, or None when the line is not
+    one of its commands; the first non-None result wins. Handlers that
+    claim every ``/`` line (like the memory commands, which answer
+    "unknown command") must come last.
+    """
+
+    def __init__(self, *handlers) -> None:
+        self._handlers = [h for h in handlers if h is not None]
+
+    async def handle(
+        self, line: str, read: Callable[[str], Awaitable[str]]
+    ) -> list[str] | None:
+        for handler in self._handlers:
+            result = await handler.handle(line, read)
+            if result is not None:
+                return result
+        return None
+
+
 async def run_repl(
     orchestrator: Orchestrator,
     *,
     read: Callable[[str], Awaitable[str]] = _read_line,
     out: Callable[[str], None] = print,
-    commands: MemoryCommands | None = None,
+    commands: MemoryCommands | CommandSet | None = None,
 ) -> None:
     """Read typed turns until a blank line or end of input, then return.
 
-    Lines starting with ``/`` go to ``commands`` (memory controls), never to the model.
+    Lines starting with ``/`` go to ``commands`` (memory and reminder controls), never to the model.
     """
     shown_pending: str | None = None
     while True:

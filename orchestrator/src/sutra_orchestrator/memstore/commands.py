@@ -26,6 +26,10 @@ HELP = [
     "  /reject <id>         decline a proposal",
     "  /archive search <q>  search old conversations (older than the hot period)",
     "  /archive purge --before YYYY-MM-DD   permanently delete old conversations",
+    "Reminder commands:",
+    "  /remind <when> <what>   set a reminder, e.g. /remind in 20 minutes call Sam",
+    "  /reminders              list pending reminders; /reminders cancel <id>",
+    "  /inbox                  reminders that have fired",
 ]
 
 _SOURCES = {

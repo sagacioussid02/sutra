@@ -6,6 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import dotenv_values
 
@@ -34,6 +35,10 @@ class Config:
     memory_dir: str = "data"
     record_replies: bool = True
     episode_hot_days: int = 30
+    reminders_enabled: bool = True
+    reminders_dir: str = "data"
+    # Wall-clock reminder times ("at 5pm") are read in this timezone.
+    reminders_tz: str = "America/Denver"
 
 
 def _int(env: Mapping[str, str], name: str, default: int) -> int:
@@ -93,4 +98,18 @@ def load_config(
         memory_dir=merged.get("SUTRA_MEMORY_DIR") or "data",
         record_replies=_bool(merged, "SUTRA_RECORD_REPLIES", True),
         episode_hot_days=_int(merged, "SUTRA_EPISODE_HOT_DAYS", 30),
+        reminders_enabled=_bool(merged, "SUTRA_REMINDERS", True),
+        reminders_dir=merged.get("SUTRA_REMINDERS_DIR")
+        or merged.get("SUTRA_MEMORY_DIR")
+        or "data",
+        reminders_tz=_timezone(merged),
     )
+
+
+def _timezone(env: Mapping[str, str]) -> str:
+    raw = env.get("SUTRA_REMINDERS_TZ") or "America/Denver"
+    try:
+        ZoneInfo(raw)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ConfigError(f"SUTRA_REMINDERS_TZ is not a known timezone: {raw!r}") from None
+    return raw

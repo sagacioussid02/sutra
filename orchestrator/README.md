@@ -187,6 +187,30 @@ fails if an injection-style or credential message produces a memory.
 tools) is the interface the orchestrator uses; `NullMemory` does nothing and is
 the default when no provider is passed.
 
+## Reminders
+
+Say "remind me in 20 minutes to call Sam", "remind me at 5pm to take the
+bins out", or "remind me tomorrow at 9am to water the plants" — or type the
+same thing. The time is parsed by a deterministic parser in code, never by
+the model; if the words don't match a supported form, Sutra asks you to
+rephrase instead of guessing. Supported forms: `in N minutes/hours`,
+`in an hour`, `in half an hour`, `at 5pm` / `at 17:30` / `at noon`
+(today, or tomorrow if that time has passed), `today at ...`, and
+`tomorrow at ...`. Wall-clock times are read in `SUTRA_REMINDERS_TZ`
+(default America/Denver).
+
+Reminders live in a private SQLite file (`reminders.db`, next to the memory
+database) and survive restarts. A background scheduler fires each one
+exactly once by claiming it atomically — no model is involved in firing.
+If Sutra was off when a reminder came due, it fires once on the next start
+and is marked **late**, so you can tell it arrived after the fact.
+
+Commands: `/remind <when> <what>` sets one without speaking, `/reminders`
+lists what's pending, `/reminders cancel <id>` cancels, and `/inbox` shows
+what has fired. In the voice client, fired reminders land in the same
+inbox; speaking them aloud (ask-first, like background results) is future
+work. Turn the whole thing off with `SUTRA_REMINDERS=off`.
+
 ## Use it from code
 
 ```python

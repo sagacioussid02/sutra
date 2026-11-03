@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ..classifier import IntentClassifier
 from ..config import load_config
@@ -17,6 +18,7 @@ from ..memstore.commands import MemoryCommands  # noqa: F401  (kept for parity w
 from ..model import AnthropicModel
 from ..orchestrator import Orchestrator
 from ..prompts import load_prompt
+from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
 from .config import load_voice_config
 from .local_engines import FasterWhisperTranscriber, SaySpeaker
@@ -63,11 +65,19 @@ async def _run(verbose: bool) -> int:
                 hot_days=config.episode_hot_days,
                 on_notice=lambda notice: print(f"  {notice}"),
             )
+        reminder_store: ReminderStore | None = None
+        reminder_scheduler: ReminderScheduler | None = None
+        reminders: ReminderService | None = None
+        if config.reminders_enabled:
+            reminder_store = ReminderStore(_memory_dir(config.reminders_dir))
+            reminders = ReminderService(reminder_store, ZoneInfo(config.reminders_tz))
+            reminder_scheduler = ReminderScheduler(reminder_store)
         orchestrator = Orchestrator(
             model=model,
             gateway=gateway,
             classifier=IntentClassifier(model, timeout=config.classifier_timeout),
             memory=memory,
+            reminders=reminders,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
@@ -92,13 +102,22 @@ async def _run(verbose: bool) -> int:
             ),
             cloud, local, settings, start_private=vc.start_private
         )
+        if reminder_scheduler is not None:
+            # Fired reminders land in the inbox (see /inbox in the REPL);
+            # spoken announcement of a fired reminder is future work that
+            # must go through the ask-first notification path.
+            reminder_scheduler.start_task()
         try:
             await session.run()
         finally:
+            if reminder_scheduler is not None:
+                await reminder_scheduler.stop()
             await session.close()
             await orchestrator.flush()
             if memory is not None:
                 memory.close()
+            if reminder_store is not None:
+                reminder_store.close()
     finally:
         await gateway.close()
     return 0
