@@ -23,6 +23,7 @@ from .offers import OffersCommands, build_graph_and_offers
 from .idle import IdleCommands, build_idle
 from .lessons import LessonCommands, build_lessons
 from .personality import HumorCommands, PersonalityService, PersonalityStore
+from .life import LifeCommands, LifeService, LifeStore
 from .agents.factory import build_agent_service
 from .reminders import ReminderScheduler, ReminderService, ReminderStore
 from .reminders.commands import ReminderCommands
@@ -119,6 +120,15 @@ async def _run(verbose: bool) -> int:
             else None
         )
         humor_commands = HumorCommands(personality) if personality is not None else None
+        life = None
+        if config.life_enabled:
+            life = LifeService(
+                LifeStore(_memory_dir(config.life_dir)), offers=offers, model=model, tz=ZoneInfo(config.reminders_tz),
+                spend=offers.spend_call if offers is not None else None,
+            )
+            if graph is not None:
+                graph.add_listener(life.on_episode)  # people and plans come from closed conversations
+        life_commands = LifeCommands(life) if life is not None else None
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -130,7 +140,8 @@ async def _run(verbose: bool) -> int:
         # line (including "unknown command"), so it must be tried last.
         commands = CommandSet(
             reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands,
-            idle_commands, lesson_commands, humor_commands, memory_commands
+            idle_commands, lesson_commands, humor_commands, life_commands,
+            memory_commands
         )
         orchestrator = Orchestrator(
             model=model,
@@ -144,6 +155,7 @@ async def _run(verbose: bool) -> int:
             offers=offers,
             lessons=lessons,
             personality=personality,
+            life=life,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
@@ -194,6 +206,8 @@ async def _run(verbose: bool) -> int:
             offers.start_task()
         if lessons is not None:
             lessons.start_task()
+        if life is not None:
+            life.start_task()
         if idle is not None:
             idle.start_task()
             if idle.enabled:
@@ -211,6 +225,8 @@ async def _run(verbose: bool) -> int:
                 await interests.stop()
             if lessons is not None:
                 await lessons.stop()
+            if life is not None:
+                await life.stop()
             if idle is not None:
                 await idle.stop_task()
             if offers is not None:
@@ -235,6 +251,8 @@ async def _run(verbose: bool) -> int:
                 lessons.store.close()
             if personality is not None:
                 personality.store.close()
+            if life is not None:
+                life.store.close()
     finally:
         await gateway.close()
     return 0

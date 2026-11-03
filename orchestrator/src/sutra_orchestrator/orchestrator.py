@@ -38,6 +38,7 @@ from typing import Any, Protocol
 from .agents import DELEGATE_TOOL, AgentService, Findings
 from .graph import GraphService
 from .interests import InterestService
+from .life import LifeService, LifeTurn, engaged, refuses
 from .offers import OffersService, OpenOffer, is_deferral
 from .personality import PersonalityService
 from .classifier import AFFIRM, DENY, MODIFY, IntentClassifier
@@ -125,6 +126,12 @@ class LessonSource(Protocol):
     def tools(self) -> list[LocalTool]: ...
 
 
+_CHECKIN_NOTE = (
+    "You just asked the user: \"{question}\" and they have answered. Respond with real interest in one or two "
+    "short sentences, and ask at most one natural follow-up question. If their reply is really about something "
+    "else, just follow them."
+)
+CHECKIN_REFUSED_REPLY = "Okay, I won't ask about that."
 _LESSON_NOTE = (
     "The user just agreed to this: {detail}. In one short sentence, say you will keep that in mind "
     "from now on. Do not repeat it at length."
@@ -177,6 +184,7 @@ class Orchestrator:
         offers: OffersService | None = None,
         lessons: LessonSource | None = None,
         personality: PersonalityService | None = None,
+        life: LifeService | None = None,
         max_tool_calls: int = 6,
         history_turns: int = 20,
         reask_limit: int = 2,
@@ -195,6 +203,8 @@ class Orchestrator:
         self._offers = offers
         self._lessons = lessons
         self._personality = personality
+        self._life = life
+        self._life_turn = LifeTurn()
         self._open_offer: OpenOffer | None = None
         self._open_offer_at: datetime | None = None
         self.last_activity: datetime = (now or (lambda: datetime.now(timezone.utc)))()
@@ -271,6 +281,7 @@ class Orchestrator:
             interests=self._interests,
             lessons=self._lessons,
             personality=self._personality,
+            life=self._life,
             max_tool_calls=self._max_tool_calls,
             history_turns=self._history_turns,
             reask_limit=self._reask_limit,
@@ -388,6 +399,7 @@ class Orchestrator:
         self.last_activity = self._now()
         if self._personality is not None:
             self._personality.start_reaction(text)  # how did they take the last joke? read beside this turn
+        self._life_turn = self._life.on_user_text(text) if self._life is not None else LifeTurn()
         turn = _Turn()
         extra_system = ""
         reply: str | None = None
@@ -417,7 +429,10 @@ class Orchestrator:
 
         await self._record(text, reply, turn)
         if ordinary and self._graph is not None:
-            self._graph.observe(text, reply, [t.name for t in turn.tools], low_confidence=low_confidence)
+            self._graph.observe(
+                text, reply, [t.name for t in turn.tools], low_confidence=low_confidence,
+                private=self._life_turn.private,
+            )
         self._history = self._history[-self._history_turns :]
         return reply
 
@@ -435,6 +450,20 @@ class Orchestrator:
             minutes=OFFER_VALID_MINUTES
         ):
             self._offers.resolve(offer, "ignored")  # too long ago for a bare "yes" to mean it
+            return None, ""
+        if offer.open:
+            # An open question ("how did it go?") is answered by any engaged reply, not only by yes.
+            if is_deferral(text):
+                self._offers.resolve(offer, "deferred")
+                return None, ""
+            if refuses(text):
+                self._offers.resolve(offer, "declined")
+                self._history.append([_text_msg("user", text), _text_msg("assistant", CHECKIN_REFUSED_REPLY)])
+                return CHECKIN_REFUSED_REPLY, ""
+            if engaged(offer.detail, text):
+                self._offers.resolve(offer, "accepted")
+                return None, _CHECKIN_NOTE.format(question=offer.teaser)
+            self._offers.resolve(offer, "ignored")
             return None, ""
         short = len(text.split()) <= SHORT_ANSWER_WORDS
         if is_deferral(text):
@@ -652,6 +681,14 @@ class Orchestrator:
             lessons_block = self._lessons.block()  # active lessons only; data, not authority
             if lessons_block:
                 system += "\n\n" + lessons_block
+        life_note = ""
+        if self._life is not None:
+            people = self._life.block(text)  # who and what is in their life: background, never instruction
+            if people:
+                system += "\n\n" + people
+            life_note = self._life_turn.note  # a listening-mode or crisis note, decided in code
+            if life_note:
+                system += "\n\n" + life_note
         if extra_system:
             system += "\n\n" + extra_system
 
@@ -659,8 +696,8 @@ class Orchestrator:
         if self._personality is not None:
             # Code decides whether a light touch of humor is even allowed; the note only invites it.
             humor = self._personality.plan(
-                text, action_pending=self._pending is not None, has_note=bool(extra_system),
-                low_confidence=low_confidence,
+                text, action_pending=self._pending is not None,
+                has_note=bool(extra_system or life_note), low_confidence=low_confidence,
             )
         first_system = f"{system}\n\n{humor.note}" if humor is not None else system
 
@@ -758,7 +795,13 @@ class Orchestrator:
                 followup.cancel()
             except Exception:
                 log.warning("follow-up decision failed; replying without it", exc_info=True)
-        blocked = offers is None or pending_created or self._pending is not None or limit_hit_reply
+        blocked = (
+            offers is None
+            or pending_created
+            or self._pending is not None
+            or limit_hit_reply
+            or self._life_turn.private  # they just wanted to talk: nothing unprompted on top
+        )
         if blocked:
             if found is not None and offers is not None:
                 offers.discard(found)  # it was never said
