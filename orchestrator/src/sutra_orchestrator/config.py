@@ -35,6 +35,16 @@ class Config:
     memory_dir: str = "data"
     record_replies: bool = True
     episode_hot_days: int = 30
+    agents_enabled: bool = True
+    agent_model: str = DEFAULT_CLASSIFIER_MODEL
+    agent_tools: tuple[str, ...] = ()
+    agents_dir: str = "data"
+    agent_max_searches: int = 5
+    agent_max_tool_calls: int = 5
+    agent_run_tokens: int = 8000
+    agent_timeout_s: int = 180
+    agent_daily_runs: int = 3
+    agent_daily_tokens: int = 60_000
     reminders_enabled: bool = True
     reminders_dir: str = "data"
     # Wall-clock reminder times ("at 5pm") are read in this timezone.
@@ -98,6 +108,18 @@ def load_config(
         memory_dir=merged.get("SUTRA_MEMORY_DIR") or "data",
         record_replies=_bool(merged, "SUTRA_RECORD_REPLIES", True),
         episode_hot_days=_int(merged, "SUTRA_EPISODE_HOT_DAYS", 30),
+        agents_enabled=_bool(merged, "SUTRA_AGENTS", True),
+        agent_model=merged.get("SUTRA_AGENT_MODEL") or DEFAULT_CLASSIFIER_MODEL,
+        agent_tools=tuple(
+            t.strip() for t in (merged.get("SUTRA_AGENT_TOOLS") or "").split(",") if t.strip()
+        ),
+        agents_dir=merged.get("SUTRA_AGENTS_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
+        agent_max_searches=_int(merged, "SUTRA_AGENT_MAX_SEARCHES", 5),
+        agent_max_tool_calls=_int(merged, "SUTRA_AGENT_MAX_TOOL_CALLS", 5),
+        agent_run_tokens=_int(merged, "SUTRA_AGENT_RUN_TOKENS", 8000),
+        agent_timeout_s=_int(merged, "SUTRA_AGENT_TIMEOUT", 180),
+        agent_daily_runs=_int(merged, "SUTRA_AGENT_DAILY_RUNS", 3),
+        agent_daily_tokens=_int(merged, "SUTRA_AGENT_DAILY_TOKENS", 60_000),
         reminders_enabled=_bool(merged, "SUTRA_REMINDERS", True),
         reminders_dir=merged.get("SUTRA_REMINDERS_DIR")
         or merged.get("SUTRA_MEMORY_DIR")

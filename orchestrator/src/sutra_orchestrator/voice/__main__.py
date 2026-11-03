@@ -18,6 +18,7 @@ from ..memstore.commands import MemoryCommands  # noqa: F401  (kept for parity w
 from ..model import AnthropicModel
 from ..orchestrator import Orchestrator
 from ..prompts import load_prompt
+from ..agents.factory import build_agent_service
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
 from .config import load_voice_config
@@ -55,6 +56,7 @@ async def _run(verbose: bool) -> int:
         model = AnthropicModel(
             config.api_key, config.model, config.classifier_model,
             extractor_model=config.extractor_model,
+            agent_model=config.agent_model,
         )
         memory = None
         if config.memory_enabled:
@@ -76,12 +78,19 @@ async def _run(verbose: bool) -> int:
                 session.deliver_reminder(entry, entry.text, entry.late)
 
             reminder_scheduler = ReminderScheduler(reminder_store, on_deliver=deliver)
+        agents = None
+        if config.agents_enabled:
+            agents = build_agent_service(
+                config, model, gateway, lambda: orchestrator.gateway_tools,
+                _memory_dir(config.agents_dir), ZoneInfo(config.reminders_tz),
+            )
         orchestrator = Orchestrator(
             model=model,
             gateway=gateway,
             classifier=IntentClassifier(model, timeout=config.classifier_timeout),
             memory=memory,
             reminders=reminders,
+            agents=agents,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
@@ -109,6 +118,8 @@ async def _run(verbose: bool) -> int:
                 (lambda entry: reminder_store.mark_seen(entry.id)) if reminder_store else None
             ),
         )
+        if agents is not None:
+            orchestrator.set_research_hooks(session.can_start_job, session.adopt_research)
         if reminder_scheduler is not None and reminder_store is not None:
             # Reminders that fired but were never heard (the last run ended
             # first) are said now, marked late.
@@ -121,11 +132,14 @@ async def _run(verbose: bool) -> int:
             if reminder_scheduler is not None:
                 await reminder_scheduler.stop()
             await session.close()
+            await orchestrator.cancel_research()
             await orchestrator.flush()
             if memory is not None:
                 memory.close()
             if reminder_store is not None:
                 reminder_store.close()
+            if agents is not None:
+                agents.store.close()
     finally:
         await gateway.close()
     return 0

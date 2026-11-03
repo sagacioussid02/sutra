@@ -51,6 +51,7 @@ class Job:
     utterance: str
     lane: Orchestrator
     task: asyncio.Future
+    plain: bool = False  # a research run: its result never needs the lane's confirmation
 
 
 @dataclass
@@ -110,6 +111,15 @@ class VoiceSession:
     @property
     def engines(self) -> Engines:
         return self._local if self._state.private else self._cloud  # type: ignore[return-value]
+
+    def can_start_job(self) -> bool:
+        return len(self._jobs) < self._s.max_background
+
+    def adopt_research(self, label: str, task: str, work: asyncio.Future) -> None:
+        """Track a delegated research run as a background job, announced after asking."""
+        job = Job(label, task, self._fg, work, plain=True)
+        self._jobs.append(job)
+        work.add_done_callback(lambda t, j=job: self._job_done(j, t))
 
     def deliver_reminder(self, entry: object, text: str, late: bool = False) -> None:
         """Queue a fired reminder. It is spoken at the next quiet moment, not asked about."""
@@ -201,6 +211,9 @@ class VoiceSession:
 
     async def close(self) -> None:
         """Wait for background jobs and memory work so nothing is lost on exit."""
+        for j in self._jobs:
+            if j.plain:
+                j.task.cancel()  # a research run is recorded as interrupted, not waited for
         pending = [j.task for j in self._jobs]
         if pending:
             self._out(f"  waiting for {len(pending)} background job(s) to finish...")
@@ -413,7 +426,7 @@ class VoiceSession:
             return  # shutting down: there is nobody to tell
         try:
             reply = task.result()
-            kind = "confirm" if job.lane.pending is not None else "result"
+            kind = "confirm" if job.lane.pending is not None and not job.plain else "result"
         except Exception:
             reply, kind = "That didn't work out.", "error"
         self._in_background(job.lane.flush())

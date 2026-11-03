@@ -709,3 +709,28 @@ async def test_a_fired_reminder_is_spoken_without_asking_and_marked_heard():
         "Sorry, this one is late. You asked me to remind you: water the plants.",
     ]
     assert heard == ["e1", "e2"]
+
+
+async def test_a_research_run_counts_against_the_cap_and_is_announced_after_asking():
+    s, shared, mic, speaker, out = build(
+        [(0.0, b"c")],
+        {b"c": T("yes please")},
+        {},
+        labels={"yes please": "affirm"},
+        commands=[("q", 0.8)],
+    )
+
+    async def research():
+        await asyncio.sleep(0.1)
+        return "From a web search: it rained."
+
+    assert s.can_start_job()
+    work = asyncio.ensure_future(research())
+    s.adopt_research("weather lately", "what was the weather", work)
+    s.adopt_research("second", "second task", asyncio.ensure_future(asyncio.sleep(5)))
+    assert not s.can_start_job()  # two jobs: at the cap
+    await s.run()
+    said = speaker.said
+    assert any("answer to your earlier request, weather lately" in x for x in said)
+    assert said[-1] == "From a web search: it rained."  # only after the yes
+    assert s._fg.notes == [("what was the weather", "From a web search: it rained.")]

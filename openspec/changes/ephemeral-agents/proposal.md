@@ -1,21 +1,32 @@
 ## Why
 
-Some requests are bigger than one turn: "compare these three laptops for photo editing", "find out what changed in the new tax rules". Doing them inline blocks the conversation and burns the main context on intermediate material. The voice work already built the shape for this — `Orchestrator.fork()` lanes that run in the background and report back — but there is no deliberate, user-invoked delegation: a way to say "go research this and come back with an answer" and have a bounded worker do it.
+Some requests are bigger than one turn: "compare these three laptops for photo editing", "find out what changed in the new tax rules", "where could I go for Diwali this year?". Doing them inline blocks the conversation and fills the main context with intermediate material. The voice work already built the shape for this (`Orchestrator.fork()` lanes that run in the background and report back through an ask-first announcement), but there is no deliberate way to say "go research this and come back with an answer" and have a bounded worker do it.
 
-**Status: stub — not implemented. This change is gated on the reminders + direct-answers changes (A+B) being dogfooded first, and on Sidd's explicit go-ahead.**
+It is also the first place untrusted content (web pages) enters the system on purpose, so the safety rules have to be settled before the feature exists, not after.
 
-## What Changes (planned)
+## What Changes
 
-- A `delegate` capability: the user (or the main lane, with the user's knowledge) spawns an ephemeral subagent for a self-contained research or comparison task; its result returns as a proposal to the main conversation, announced through the ask-first notification path and filed in the inbox from the reminders change.
-- Sandbox rules, enforced in code rather than by prompt: an ephemeral agent gets **no tools that mutate anything and no confirm-first (consequential) tools** — read-only lookups only; it **cannot spawn further agents**; it **cannot write memory** — anything it "learns" comes back as a proposal the main conversation (and the user) can accept or drop, never as a direct write; its **budget (turns, tool calls, wall-clock) is enforced by the harness**, like `max_tool_calls` today, not by asking the model to stop.
-- Everything an ephemeral agent produces — including anything it read from the web — is treated as **untrusted data** by the main conversation: it can inform an answer, it cannot issue instructions, trigger tools, or confirm anything. This is the main prompt-injection surface in the whole roadmap, and the design must start from that.
+- Add a `delegate_research` capability: when a request needs research, the assistant proposes sending a researcher ("I can send someone to look into that. It'll take a few minutes. Want me to?"). The user's yes starts it. A delegated run is a background job like any other: the conversation carries on, and the result is announced through the existing ask-first path.
+- An ephemeral agent is a throwaway worker with a **brief** (the task, written by the main lane) and nothing else: no conversation history, no memory, no personal data unless the brief contains it.
+- Its tools are an explicit allowlist: Anthropic's server-side web search, plus any gateway tools the user names in `SUTRA_AGENT_TOOLS` (default: none). Nothing that mutates, nothing confirm-first, no local tools, no `delegate_research`. Enforced in code.
+- Budgets are enforced by the harness, not the prompt: tool calls, searches, output tokens, wall-clock, and a daily cap on runs. Hitting any limit ends the run with whatever it has, marked partial.
+- The result comes back as **untrusted findings** (text and source URLs). The main lane turns them into a short spoken summary in a step with tools disabled, so anything injected in a web page cannot trigger an action. The agent cannot write memory; at most the summary offers "want me to remember that?".
+- Runs are recorded locally (task, status, cost counters, result) so the user can list them and see what was spent.
 
 ## Capabilities
 
 ### New Capabilities
+- `ephemeral-agents`: bounded, sandboxed, read-only delegation for research tasks, started with the user's yes and returning untrusted findings through the ask-first path.
 
-- `ephemeral-agents`: bounded, sandboxed, read-only delegation for research tasks, with results returned as proposals. (Stub — no spec yet; the spec is written when this change is picked up.)
+### Modified Capabilities
+(none; `voice-background-tasks` gains one more kind of job but its requirements are unchanged)
 
 ## Impact
 
-None yet — stub only. When picked up: expected to reuse `Orchestrator.fork()` and the background-lane notification queue, add a tool-surface filter for child lanes, and add budget plumbing. No gateway changes expected.
+- New package `orchestrator/src/sutra_orchestrator/agents/` and a local `agents.db` (private, gitignored), following the `reminders` package layout.
+- `AnthropicModel` gains a research call that uses the web search server tool. This is the first outbound web access in the system; the task text and search queries go to Anthropic.
+- `Orchestrator` gains a local `delegate_research` tool and a way for a pending action to be a local run instead of a gateway call.
+- Voice loop: a delegated run registers as a `Job` and shares the existing cap of two background jobs.
+- New settings: `SUTRA_AGENTS`, `SUTRA_AGENT_MODEL`, `SUTRA_AGENT_TOOLS`, per-run and daily budgets. Cost is real; defaults are small.
+- No gateway, twin, finanxe or minions changes.
+- Depends on `voice-background-tasks` (jobs, notices) and `reminders-scheduler`/`direct-answers` (merged).
