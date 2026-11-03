@@ -45,6 +45,10 @@ class IntentModel(Protocol):
     async def classify(self, *, system: str, user: str) -> str: ...
 
 
+class InterestModel(Protocol):
+    async def reflect_interests(self, *, system: str, user: str) -> list[dict[str, Any]]: ...
+
+
 class ExtractorModel(Protocol):
     async def extract(self, *, system: str, user: str) -> list[dict[str, Any]]: ...
 
@@ -83,6 +87,33 @@ _EXTRACT_TOOL = {
             }
         },
         "required": ["statements"],
+    },
+}
+
+
+_INTERESTS_TOOL = {
+    "name": "record_interests",
+    "description": "Record interest topics found in the user's utterances, possibly none.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string"},
+                        "relation": {"type": "string", "enum": ["new", "strengthens", "changes"]},
+                        "target": {"type": "integer"},
+                        "before": {"type": "string"},
+                        "now": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "integer"}},
+                    },
+                    "required": ["label", "relation", "evidence"],
+                },
+            }
+        },
+        "required": ["items"],
     },
 }
 
@@ -185,6 +216,21 @@ class AnthropicModel:
                 label = block.input.get("label") if isinstance(block.input, dict) else None
                 return label if isinstance(label, str) else ""
         return ""
+
+    async def reflect_interests(self, *, system: str, user: str) -> list[dict[str, Any]]:
+        response = await self._client.messages.create(
+            model=self._extractor_model,
+            max_tokens=700,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            tools=[_INTERESTS_TOOL],
+            tool_choice={"type": "tool", "name": "record_interests"},
+        )
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "record_interests":
+                items = block.input.get("items") if isinstance(block.input, dict) else None
+                return items if isinstance(items, list) else []
+        return []
 
     async def extract(self, *, system: str, user: str) -> list[dict[str, Any]]:
         response = await self._client.messages.create(

@@ -734,3 +734,44 @@ async def test_a_research_run_counts_against_the_cap_and_is_announced_after_aski
     assert any("answer to your earlier request, weather lately" in x for x in said)
     assert said[-1] == "From a web search: it rained."  # only after the yes
     assert s._fg.notes == [("what was the weather", "From a web search: it rained.")]
+
+
+def _interest_session(tmp_path, said, **kw):
+    from zoneinfo import ZoneInfo
+
+    from sutra_orchestrator.interests import InterestService, InterestStore
+
+    from .fakes import NOW, Clock
+
+    store = InterestStore(tmp_path)
+    service = InterestService(store, ZoneInfo("UTC"), now=Clock())
+    iid = store.add("weekend trips", status="proposed", source="reflection", now=NOW, offer=True)
+    s, shared, mic, speaker, out = build(
+        [(0.0, b"c")], {b"c": T(said)}, {}, labels={"yes please": "affirm", "no thanks": "deny"},
+        commands=[("q", 0.8)], **kw,
+    )
+    s.attach_interests(service)
+    service._on_offer()  # the periodic check found something to ask about
+    return s, speaker, store, iid
+
+
+async def test_a_new_interest_is_asked_about_at_a_quiet_moment_and_yes_keeps_it(tmp_path):
+    s, speaker, store, iid = _interest_session(tmp_path, "yes please")
+    await s.run()
+    assert speaker.said[0] == "I've noticed you're into weekend trips. Want me to keep that in mind?"
+    assert speaker.said[-1] == "Okay, I'll keep that in mind."
+    assert store.get(iid).status == "active"
+
+
+async def test_no_declines_it_for_good(tmp_path):
+    s, speaker, store, iid = _interest_session(tmp_path, "no thanks")
+    await s.run()
+    assert store.get(iid).status == "rejected"
+
+
+async def test_not_now_keeps_it_for_later_without_asking_the_classifier(tmp_path):
+    s, speaker, store, iid = _interest_session(tmp_path, "not now please")
+    await s.run()
+    row = store.get(iid)
+    assert row.status == "proposed" and row.offered_at is not None
+    assert speaker.said[-1] == "Okay, I'll ask another time."

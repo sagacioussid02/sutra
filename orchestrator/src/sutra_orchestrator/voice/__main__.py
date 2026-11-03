@@ -19,6 +19,7 @@ from ..model import AnthropicModel
 from ..orchestrator import Orchestrator
 from ..prompts import load_prompt
 from ..agents.factory import build_agent_service
+from ..interests import InterestService, InterestStore, Reflector
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
 from .config import load_voice_config
@@ -78,6 +79,25 @@ async def _run(verbose: bool) -> int:
                 session.deliver_reminder(entry, entry.text, entry.late)
 
             reminder_scheduler = ReminderScheduler(reminder_store, on_deliver=deliver)
+        interests = None
+        if config.interests_enabled:
+            interest_store = InterestStore(_memory_dir(config.interests_dir))
+            reflector = None
+            if config.reflection_enabled and memory is not None:
+                reflector = Reflector(
+                    memory,
+                    interest_store,
+                    model,
+                    window_days=config.reflection_days,
+                    exclude_tool_prefixes=config.reflection_exclude_tools,
+                )
+            interests = InterestService(
+                interest_store,
+                ZoneInfo(config.reminders_tz),
+                reflector=reflector,
+                reflection_hours=config.reflection_hours,
+                nudge_hours=config.nudge_hours,
+            )
         agents = None
         if config.agents_enabled:
             agents = build_agent_service(
@@ -91,6 +111,7 @@ async def _run(verbose: bool) -> int:
             memory=memory,
             reminders=reminders,
             agents=agents,
+            interests=interests,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
@@ -118,6 +139,9 @@ async def _run(verbose: bool) -> int:
                 (lambda entry: reminder_store.mark_seen(entry.id)) if reminder_store else None
             ),
         )
+        if interests is not None:
+            session.attach_interests(interests)
+            interests.start_task()
         if agents is not None:
             orchestrator.set_research_hooks(session.can_start_job, session.adopt_research)
         if reminder_scheduler is not None and reminder_store is not None:
@@ -133,6 +157,8 @@ async def _run(verbose: bool) -> int:
                 await reminder_scheduler.stop()
             await session.close()
             await orchestrator.cancel_research()
+            if interests is not None:
+                await interests.stop()
             await orchestrator.flush()
             if memory is not None:
                 memory.close()
@@ -140,6 +166,8 @@ async def _run(verbose: bool) -> int:
                 reminder_store.close()
             if agents is not None:
                 agents.store.close()
+            if interests is not None:
+                interests.store.close()
     finally:
         await gateway.close()
     return 0

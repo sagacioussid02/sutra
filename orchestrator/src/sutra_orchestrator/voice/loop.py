@@ -104,6 +104,8 @@ class VoiceSession:
         self._offer: Notice | None = None
         self._awaiting: Orchestrator | None = None  # lane whose held action the user is answering
         self._notify = asyncio.Event()
+        self._interests = None  # InterestService, attached by the caller
+        self._i_offer = None  # the interest question currently put to the user
         self._reminders: deque[tuple[object, str, bool]] = deque()
         self._on_reminder_spoken = on_reminder_spoken
         self._read_task: asyncio.Future | None = None
@@ -111,6 +113,40 @@ class VoiceSession:
     @property
     def engines(self) -> Engines:
         return self._local if self._state.private else self._cloud  # type: ignore[return-value]
+
+    def attach_interests(self, service) -> None:
+        """Let new interest proposals, changes and check-ins be asked about at quiet moments."""
+        self._interests = service
+        service.set_on_offer(self._notify.set)
+
+    async def _maybe_interest_offer(self) -> bool:
+        if self._interests is None or self._i_offer is not None or self._offer is not None:
+            return False
+        offer = self._interests.next_offer()
+        if offer is None:
+            return False
+        self._i_offer = offer
+        self._out(f"sutra> {offer.line}")
+        await self._say(offer.line)
+        return True
+
+    async def _handle_interest_offer(self, text: str) -> bool:
+        """Act on the answer to an interest question. True if the reply was consumed."""
+        offer, self._i_offer = self._i_offer, None
+        assert offer is not None and self._interests is not None
+        t = text.lower()
+        if any(p in t for p in ("not now", "not right now", "later", "maybe later")):
+            outcome = "later"
+        else:
+            label = await self._fg.classify_reply(offer.line, text)
+            outcome = {AFFIRM: "yes", DENY: "no"}.get(label)
+        if outcome is None:
+            self._interests.answer(offer, "later")
+            return False  # something else entirely: treat it as a normal request
+        reply = self._interests.answer(offer, outcome)
+        self._out(f"sutra> {reply}")
+        await self._say(reply)
+        return True
 
     def can_start_job(self) -> bool:
         return len(self._jobs) < self._s.max_background
@@ -177,14 +213,16 @@ class VoiceSession:
                 task, self._read_task = self._read_task, None
                 return task.result()
             self._notify.clear()
-            if self._next_offerable() is not None:
+            if self._next_offerable() is not None or (
+                self._interests is not None and self._interests.next_offer() is not None
+            ):
                 await self._conversation(announce=True)
 
     async def _conversation(self, announce: bool = False) -> None:
         """Take turns. In conversation mode keep listening after each reply until you go quiet."""
         try:
-            if announce:
-                await self._maybe_offer()
+            if announce and not await self._maybe_offer():
+                await self._maybe_interest_offer()
             carry: Transcript | None = None
             while True:
                 try:
@@ -203,6 +241,9 @@ class VoiceSession:
             if self._offer is not None:  # asked, but got no answer: keep it for later
                 self._offer.declined = True
                 self._offer = None
+            if self._i_offer is not None and self._interests is not None:
+                self._interests.answer(self._i_offer, "later")
+                self._i_offer = None
 
     def _in_background(self, coro) -> None:
         task = asyncio.ensure_future(coro)
@@ -278,6 +319,8 @@ class VoiceSession:
 
         if self._offer is not None and text and await self._handle_offer(text):
             return True, None
+        if self._i_offer is not None and text and await self._handle_interest_offer(text):
+            return True, None
         if text and self._asks_what_came_back(text) and await self._reoffer():
             return True, None
 
@@ -299,8 +342,8 @@ class VoiceSession:
             self._show_pending(lane)
             if lane is self._awaiting and lane.pending is None:
                 self._awaiting = None
-        if interrupted is None:
-            await self._maybe_offer()  # a natural gap: now is the time to ask
+        if interrupted is None and not await self._maybe_offer():  # a natural gap: now is the time to ask
+            await self._maybe_interest_offer()
         return True, interrupted
 
     def _show_pending(self, lane: Orchestrator) -> None:

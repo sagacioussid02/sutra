@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .agents import DELEGATE_TOOL, AgentService, Findings
+from .interests import InterestService
 from .classifier import AFFIRM, DENY, MODIFY, IntentClassifier
 from .gateway import CONFIRM_TOOL, GatewaySession, PendingInfo, ToolDef, ToolResult
 from .memory import (
@@ -126,6 +127,7 @@ class Orchestrator:
         memory: MemoryProvider | None = None,
         reminders: ReminderService | None = None,
         agents: AgentService | None = None,
+        interests: InterestService | None = None,
         max_tool_calls: int = 6,
         history_turns: int = 20,
         reask_limit: int = 2,
@@ -139,6 +141,7 @@ class Orchestrator:
         self._memory: MemoryProvider = memory if memory is not None else NullMemory()
         self._reminders = reminders
         self._agents = agents
+        self._interests = interests
         self._can_start_research: Callable[[], bool] = lambda: True
         self._adopt_research: Callable[[str, str, "asyncio.Future[str]"], None] | None = None
         self._research_tasks: set[asyncio.Future[str]] = set()
@@ -204,6 +207,7 @@ class Orchestrator:
             memory=self._memory,
             reminders=self._reminders,
             agents=self._agents,
+            interests=self._interests,
             max_tool_calls=self._max_tool_calls,
             history_turns=self._history_turns,
             reask_limit=self._reask_limit,
@@ -445,6 +449,10 @@ class Orchestrator:
         block = format_memory_block(memories, self._now())
         if block:
             system += "\n\n" + block
+        if self._interests is not None:
+            interests_block = self._interests.block(self._now())
+            if interests_block:
+                system += "\n\n" + interests_block
         if extra_system:
             system += "\n\n" + extra_system
 
@@ -621,6 +629,8 @@ class Orchestrator:
         out: dict[str, LocalTool] = {}
         if self._agents is not None:
             tools = [*tools, self._delegate_tool()]
+        if self._interests is not None:
+            tools = [*tools, *self._interests.tools()]
         for tool in tools:
             if tool.name == CONFIRM_TOOL or tool.name in self._gateway_tools:
                 log.warning("ignoring local tool %r: name is reserved or already in use", tool.name)
