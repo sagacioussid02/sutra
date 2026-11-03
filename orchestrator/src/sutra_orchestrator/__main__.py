@@ -17,6 +17,7 @@ from .memstore.commands import MemoryCommands
 from .model import AnthropicModel
 from .orchestrator import Orchestrator
 from .agents import AgentCommands
+from .interests import InterestCommands, InterestService, InterestStore, Reflector
 from .agents.factory import build_agent_service
 from .reminders import ReminderScheduler, ReminderService, ReminderStore
 from .reminders.commands import ReminderCommands
@@ -69,6 +70,27 @@ async def _run(verbose: bool) -> int:
                 reminder_store,
                 on_deliver=lambda entry: print(f"  reminder: {entry.text}"),
             )
+        interests = None
+        interest_commands = None
+        if config.interests_enabled:
+            interest_store = InterestStore(_memory_dir(config.interests_dir))
+            reflector = None
+            if config.reflection_enabled and memory is not None:
+                reflector = Reflector(
+                    memory,
+                    interest_store,
+                    model,
+                    window_days=config.reflection_days,
+                    exclude_tool_prefixes=config.reflection_exclude_tools,
+                )
+            interests = InterestService(
+                interest_store,
+                ZoneInfo(config.reminders_tz),
+                reflector=reflector,
+                reflection_hours=config.reflection_hours,
+                nudge_hours=config.nudge_hours,
+            )
+            interest_commands = InterestCommands(interests)
         agents = None
         agent_commands = None
         if config.agents_enabled:
@@ -79,7 +101,7 @@ async def _run(verbose: bool) -> int:
             agent_commands = AgentCommands(agents)
         # Reminder commands first: the memory handler answers every "/"
         # line (including "unknown command"), so it must be tried last.
-        commands = CommandSet(reminder_commands, agent_commands, memory_commands)
+        commands = CommandSet(reminder_commands, agent_commands, interest_commands, memory_commands)
         orchestrator = Orchestrator(
             model=model,
             gateway=gateway,
@@ -87,6 +109,7 @@ async def _run(verbose: bool) -> int:
             memory=memory,
             reminders=reminders,
             agents=agents,
+            interests=interests,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
@@ -108,6 +131,22 @@ async def _run(verbose: bool) -> int:
             orchestrator.set_research_hooks(
                 lambda: len(orchestrator.research_tasks) < 2, adopt
             )
+        if interests is not None:
+            shown: set[int] = set()
+
+            def announce() -> None:
+                for _ in range(3):
+                    offer = interests.next_offer()
+                    if offer is None or offer.interest_id in shown:
+                        return
+                    shown.add(offer.interest_id)
+                    interests.store.defer_offer(offer.interest_id, interests._now())
+                    print(
+                        f"\nsutra> {offer.line}  "
+                        f"(/interests approve {offer.interest_id} or /interests reject {offer.interest_id})"
+                    )
+
+            interests.set_on_offer(announce)
         count = await orchestrator.start()
         print(f"Connected to the gateway. {count} tools available. Blank line to quit.")
         if memory is not None:
@@ -115,6 +154,8 @@ async def _run(verbose: bool) -> int:
             print(f"Memory is on ({known} remembered). Type /help for memory commands.")
         else:
             print("Memory is off.")
+        if interests is not None:
+            interests.start_task()
         if reminder_scheduler is not None:
             reminder_scheduler.start_task()
             print("Reminders are on. Say 'remind me ...', or type /help.")
@@ -124,6 +165,8 @@ async def _run(verbose: bool) -> int:
             if reminder_scheduler is not None:
                 await reminder_scheduler.stop()
             await orchestrator.cancel_research()
+            if interests is not None:
+                await interests.stop()
             await orchestrator.flush()
             if memory is not None:
                 memory.close()
@@ -131,6 +174,8 @@ async def _run(verbose: bool) -> int:
                 reminder_store.close()
             if agents is not None:
                 agents.store.close()
+            if interests is not None:
+                interests.store.close()
     finally:
         await gateway.close()
     return 0

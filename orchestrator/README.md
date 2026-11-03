@@ -348,3 +348,27 @@ Your task text and its search queries go to Anthropic. Web search may carry its 
 | `SUTRA_AGENTS_DIR` | the memory directory | where `agents.db` lives |
 
 Commands in the text client: `/agents` lists recent runs and today's usage, `/agents purge` deletes the record. Runs share the background-job cap (`SUTRA_MAX_BACKGROUND`, default 2 in voice, 2 in text). Quitting cancels a running research run and records it as interrupted.
+
+
+## Interests
+
+Sutra can learn what you care about from what you say, and keep up as it changes. Once a day it reads your recent utterances and *suggests* topics ("weekend trips near home"). Nothing is used until you approve it, and a topic you decline never comes back.
+
+- **What it reads:** only your own words from the last 30 days. Never its replies, tool results, or any turn that used a `finanxe_` tool. Those utterances go to Anthropic for the reflection call, one small call a day at most.
+- **Changes over time:** it is shown the interests it already knows, so it can notice when your focus has moved ("from hiking trips to city breaks"). That becomes a proposed update; if you approve it the old version is kept in the history. An interest with nothing new for 90 days drops out of use and you are asked once whether you're still into it.
+- **Telling you:** suggestions, changes and check-ins are asked about at quiet moments, never mid-conversation. By voice you answer yes, no, or "not now". In the text client they print once; answer with the commands below.
+- **In conversation:** approved interests are given to the assistant as background, with today's date. At most once a day it may connect what you're talking about to one of them, and it offers a researcher rather than stating event dates from memory. Say "stop bringing up weekend trips" to mute one.
+
+Text-client commands: `/interests` (list), `why <id>`, `history <id>`, `approve <id>`, `reject <id>`, `mute <id>`, `add <topic>`, `forget <id>`, `forget all`, `reflect` (run now).
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_INTERESTS` | on | `off` removes the feature |
+| `SUTRA_REFLECTION` | on | `off` stops automatic suggestions; `/interests add` still works |
+| `SUTRA_REFLECTION_HOURS` | 24 | minimum time between reflection runs |
+| `SUTRA_REFLECTION_DAYS` | 30 | how far back it reads |
+| `SUTRA_REFLECTION_EXCLUDE_TOOLS` | `finanxe_` | comma-separated tool-name prefixes; turns that used them are never read |
+| `SUTRA_NUDGE_HOURS` | 24 | minimum time between chances to connect an interest |
+| `SUTRA_INTERESTS_DIR` | the memory directory | where `interests.db` lives |
+
+Reflection needs memory on (it reads the conversation record). Facts you state ("I get paid on the 15th") are tracked separately by memory, which reports when one is updated.

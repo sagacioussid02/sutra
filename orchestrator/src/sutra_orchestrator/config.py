@@ -35,6 +35,13 @@ class Config:
     memory_dir: str = "data"
     record_replies: bool = True
     episode_hot_days: int = 30
+    interests_enabled: bool = True
+    reflection_enabled: bool = True
+    reflection_hours: int = 24
+    reflection_days: int = 30
+    reflection_exclude_tools: tuple[str, ...] = ("finanxe_",)
+    nudge_hours: int = 24
+    interests_dir: str = "data"
     agents_enabled: bool = True
     agent_model: str = DEFAULT_CLASSIFIER_MODEL
     agent_tools: tuple[str, ...] = ()
@@ -108,6 +115,21 @@ def load_config(
         memory_dir=merged.get("SUTRA_MEMORY_DIR") or "data",
         record_replies=_bool(merged, "SUTRA_RECORD_REPLIES", True),
         episode_hot_days=_int(merged, "SUTRA_EPISODE_HOT_DAYS", 30),
+        interests_enabled=_bool(merged, "SUTRA_INTERESTS", True),
+        reflection_enabled=_bool(merged, "SUTRA_REFLECTION", True),
+        reflection_hours=_int(merged, "SUTRA_REFLECTION_HOURS", 24),
+        reflection_days=_int(merged, "SUTRA_REFLECTION_DAYS", 30),
+        reflection_exclude_tools=(
+            tuple(
+                t.strip()
+                for t in merged["SUTRA_REFLECTION_EXCLUDE_TOOLS"].split(",")
+                if t.strip()
+            )
+            if merged.get("SUTRA_REFLECTION_EXCLUDE_TOOLS") is not None
+            else ("finanxe_",)
+        ),
+        nudge_hours=_int(merged, "SUTRA_NUDGE_HOURS", 24),
+        interests_dir=merged.get("SUTRA_INTERESTS_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
         agents_enabled=_bool(merged, "SUTRA_AGENTS", True),
         agent_model=merged.get("SUTRA_AGENT_MODEL") or DEFAULT_CLASSIFIER_MODEL,
         agent_tools=tuple(
