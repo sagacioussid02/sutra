@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -20,11 +21,15 @@ from ..classifier import AFFIRM, DENY
 from ..orchestrator import Orchestrator
 from .types import Engines, Recorder, Transcript, VoiceError
 
+log = logging.getLogger("sutra_orchestrator")
+
 DEFAULT_FILLERS = (
     "Hmm, one sec.",
     "Okay, let me look.",
-    "Right, give me a moment.",
+    "Mm, give me a moment.",
     "Yeah, just checking.",
+    "Let me think.",
+    "Sure, one sec.",
 )
 WAIT_NOTICES = (
     "This one's taking a bit. I'm still on it, so feel free to ask me something else.",
@@ -38,13 +43,35 @@ CAME_BACK_PHRASES = ("came back", "any update", "anything back", "is it done", "
 class VoiceSettings:
     min_confidence: float = 0.5
     reask_limit: int = 2
-    filler_delay: float = 1.5
+    filler_delay: float = 1.0
     wait_notice_delay: float = 4.0
     max_background: int = 2
     conversation: bool = True
     fillers: tuple[str, ...] = DEFAULT_FILLERS
     record_dir: Path | None = None
+    stream: bool = False  # speak the reply sentence by sentence while the model writes it
     barge_in: bool = False  # speak-over: stop talking when the user starts (headphones only)
+
+
+class Streamed(str):
+    """A finished reply that was already being spoken, sentence by sentence, while it was written."""
+
+    spoken: list[str]
+    cut: bool  # the user spoke over it: the rest is not to be said
+
+    def remainder(self) -> str:
+        """What is left to say after the streamed sentences (an appended offer, say).
+
+        Sentences spoken from an earlier model step (a lead-in before a tool call) are not part of the
+        reply, so the match may begin at a later spoken sentence. If no match is found the whole reply is
+        spoken: better to repeat than to lose any of it.
+        """
+        full = " ".join(str(self).split())
+        for i in range(len(self.spoken) + 1):
+            said = " ".join(" ".join(self.spoken[i:]).split())
+            if full.startswith(said):
+                return full[len(said) :].strip()
+        return full
 
 
 @dataclass
@@ -113,6 +140,9 @@ class VoiceSession:
         self._on_reminder_spoken = on_reminder_spoken
         self._read_task: asyncio.Future | None = None
         self._barge_in = settings.barge_in
+        self._last_cut = False
+        self._stt_seconds = 0.0
+        self._first_words_at: float | None = None
 
     @property
     def engines(self) -> Engines:
@@ -333,7 +363,10 @@ class VoiceSession:
         if not wav:
             return None
         self._save_audio(wav)
-        return await self.engines.transcriber.transcribe(wav)
+        started = time.perf_counter()
+        heard = await self.engines.transcriber.transcribe(wav)
+        self._stt_seconds = time.perf_counter() - started
+        return heard
 
     async def _stop_listening(self, listen: asyncio.Future | None) -> Transcript | None:
         """Abort a recording in progress (so we can speak). Returns anything already heard."""
@@ -379,12 +412,26 @@ class VoiceSession:
             self._out("  I didn't catch any words.")
             return False, None
 
+        asked_at = time.perf_counter()
         reply, interrupted = await self._respond(
             lane, text, low_confidence=transcript.confidence < self._s.min_confidence
         )
         if reply is not None:
+            think = time.perf_counter() - asked_at
             self._out(f"sutra> {reply}")
-            spoken_over = await self._say_reply(reply)
+            spoken_over = None
+            if isinstance(reply, Streamed):
+                if not reply.cut:
+                    rest = reply.remainder()
+                    if rest:
+                        spoken_over = await self._say_reply(rest)
+            else:
+                spoken_over = await self._say_reply(reply)
+            first_words = self._first_words_at if self._first_words_at is not None else think
+            log.debug(
+                "turn timing: transcribe %.2fs, reply finished %.2fs, first words %.2fs after the request",
+                self._stt_seconds, think, first_words,
+            )
             if interrupted is None and self._is_interruption(spoken_over):
                 interrupted = spoken_over  # what they said over me is their next turn
             # Memory work (like extracting what you said) must not delay listening.
@@ -430,41 +477,112 @@ class VoiceSession:
             return await self._respond_with_filler(lane, text, low_confidence), None
 
         loop = asyncio.get_running_loop()
-        work = asyncio.ensure_future(lane.respond(text, low_confidence=low_confidence))
+        sentences: asyncio.Queue[str] = asyncio.Queue()
+        stream = self._s.stream
+        extra = {"on_text": sentences.put_nowait} if stream else {}
+        work = asyncio.ensure_future(lane.respond(text, low_confidence=low_confidence, **extra))
         started = loop.time()
+        self._first_words_at = None
         timers: list[tuple[float, str]] = []
         if self._s.filler_delay > 0 and self._s.fillers:
             timers.append((self._s.filler_delay, "filler"))
         if self._s.wait_notice_delay > 0:
             timers.append((self._s.wait_notice_delay, "notice"))
         timers.sort()
+        return await self._wait_for_reply(lane, text, work, sentences, stream, timers, started, loop)
+
+    async def _wait_for_reply(
+        self, lane, text, work, sentences, stream, timers, started, loop
+    ) -> tuple[str | None, Transcript | None]:
+        """Wait for the reply, listening for the user and speaking fillers meanwhile; with streaming on,
+        hand over to speaking as soon as the first sentence is written."""
         listen: asyncio.Future | None = None
+        first: asyncio.Future | None = None
+        try:
+            while True:
+                if listen is None and not work.done():
+                    listen = asyncio.ensure_future(self._listen_once())
+                if stream and first is None:
+                    first = asyncio.ensure_future(sentences.get())
+                wait_for = {work} | ({listen} if listen else set()) | ({first} if first else set())
+                timeout = max(0.0, timers[0][0] - (loop.time() - started)) if timers else None
+                done, _ = await asyncio.wait(wait_for, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+
+                if first is not None and first in done:
+                    # The reply has started to arrive: stop listening (as a filler would) and speak as it writes.
+                    sentence, first = first.result(), None
+                    heard = await self._stop_listening(listen)
+                    listen = None
+                    if self._is_interruption(heard) and len(self._jobs) < self._s.max_background:
+                        self._detach(lane, text, work)
+                        return None, heard
+                    self._first_words_at = loop.time() - started
+                    return await self._speak_stream(work, sentences, sentence)
+
+                if work in done:
+                    late = await self._stop_listening(listen)
+                    listen = None
+                    return work.result(), (late if self._is_interruption(late) else None)
+
+                heard: Transcript | None = None
+                if listen is not None and listen in done:
+                    heard, listen = listen.result(), None
+                elif not done:  # a timer fired: stop recording so the mic doesn't hear us speak
+                    heard = await self._stop_listening(listen)
+                    listen = None
+
+                if self._is_interruption(heard):
+                    if len(self._jobs) >= self._s.max_background:
+                        await self._say(BUSY_LINE)
+                    else:
+                        self._detach(lane, text, work)
+                        return None, heard
+                if not done:
+                    await self._say(self._timer_line(timers.pop(0)[1]))
+        finally:
+            if first is not None and not first.done():
+                first.cancel()  # never leave a waiter on the sentence queue behind
+
+    async def _speak_stream(
+        self, work: asyncio.Future, sentences: asyncio.Queue, first: str
+    ) -> tuple[str, Transcript | None]:
+        """Speak sentences as the model writes them. A cut-in stops it; the model is left to finish quietly.
+
+        If anything goes wrong here the plain reply is returned, to be spoken whole, so streaming can
+        never leave Sutra mute.
+        """
+        spoken: list[str] = []
+        cut, cut_heard = False, None
+        try:
+            sentence: str | None = first
+            while sentence is not None:
+                heard = await self._say_reply(sentence)
+                spoken.append(sentence)
+                if self._last_cut:
+                    cut, cut_heard = True, heard
+                    break
+                sentence = await self._next_sentence(sentences, work)
+        except Exception:
+            log.warning("streamed speech failed; speaking the whole reply instead", exc_info=True)
+            return await work, None
+        reply = Streamed(await work)
+        reply.spoken, reply.cut = spoken, cut
+        return reply, (cut_heard if self._is_interruption(cut_heard) else None)
+
+    @staticmethod
+    async def _next_sentence(sentences: asyncio.Queue, work: asyncio.Future) -> str | None:
+        """The next sentence to speak, or None once the reply is complete and everything was spoken."""
         while True:
-            if listen is None and not work.done():
-                listen = asyncio.ensure_future(self._listen_once())
-            wait_for = {work} | ({listen} if listen else set())
-            timeout = max(0.0, timers[0][0] - (loop.time() - started)) if timers else None
-            done, _ = await asyncio.wait(wait_for, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
-
-            if work in done:
-                late = await self._stop_listening(listen)
-                return work.result(), (late if self._is_interruption(late) else None)
-
-            heard: Transcript | None = None
-            if listen is not None and listen in done:
-                heard, listen = listen.result(), None
-            elif not done:  # a timer fired: stop recording so the mic doesn't hear us speak
-                heard = await self._stop_listening(listen)
-                listen = None
-
-            if self._is_interruption(heard):
-                if len(self._jobs) >= self._s.max_background:
-                    await self._say(BUSY_LINE)
-                else:
-                    self._detach(lane, text, work)
-                    return None, heard
-            if not done:
-                await self._say(self._timer_line(timers.pop(0)[1]))
+            if not sentences.empty():
+                return sentences.get_nowait()
+            if work.done():
+                return None
+            getter = asyncio.ensure_future(sentences.get())
+            await asyncio.wait({getter, work}, return_when=asyncio.FIRST_COMPLETED)
+            if getter.done():
+                return getter.result()
+            getter.cancel()
+            await asyncio.gather(getter, return_exceptions=True)
 
     def _timer_line(self, kind: str) -> str:
         if kind == "filler":
@@ -613,6 +731,7 @@ class VoiceSession:
         voice off at once; the person is then heard out and transcribed like any other turn. Returns None
         if the reply played to the end, or nothing usable was heard.
         """
+        self._last_cut = False
         if not (self._barge_in and self._recorder.auto_stop):
             await self._say(text)
             return None
@@ -650,6 +769,7 @@ class VoiceSession:
                 if not cut:
                     self._recorder.cancel()
                 wav = self._recorder.stop()
+            self._last_cut = cut
             if not cut or not wav:
                 return None
             self._save_audio(wav)
