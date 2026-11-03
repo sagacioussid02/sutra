@@ -128,6 +128,7 @@ async def play_pcm_stream(chunks: Any) -> None:
     except Exception as exc:
         raise VoiceError(f"could not open the speakers ({exc})") from None
     leftover = b""
+    cut = False
     try:
         async for chunk in chunks:
             data = leftover + chunk
@@ -135,6 +136,9 @@ async def play_pcm_stream(chunks: Any) -> None:
             leftover = data[usable:]
             if usable:
                 await asyncio.to_thread(stream.write, data[:usable])
+    except asyncio.CancelledError:
+        cut = True  # the user spoke over it: stop at once, do not play out what is queued
+        raise
     finally:
-        await asyncio.to_thread(stream.stop)  # waits for queued audio to finish playing
+        await asyncio.to_thread(stream.abort if cut else stream.stop)  # stop() lets queued audio finish
         stream.close()

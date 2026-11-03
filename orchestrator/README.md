@@ -197,7 +197,13 @@ rephrase instead of guessing. Supported forms: `in N minutes/hours`,
 `in an hour`, `in half an hour`, `at 5pm` / `at 17:30` / `at noon`
 (today, or tomorrow if that time has passed), `today at ...`, and
 `tomorrow at ...`. Wall-clock times are read in `SUTRA_REMINDERS_TZ`
-(default America/Denver).
+(default America/Denver). It copes with ordinary speech: filler before it ("so let's
+remind me ...", "okay, can you please remind me ..."), hours spoken as words ("at nine",
+"at five o'clock"), and "9 a.m." / "in the morning" / "at night". An hour with no am or pm
+is handled carefully: with no day ("at 8") it takes the next one coming, in waking hours, and
+says the exact time back so a wrong guess is heard at once; with a day ("tomorrow at nine") it
+asks "Do you mean tomorrow at 9:00 AM or tomorrow at 9:00 PM? Say morning or evening." and
+reads your answer.
 
 Reminders live in a private SQLite file (`reminders.db`, next to the memory
 database) and survive restarts. A background scheduler fires each one
@@ -253,8 +259,23 @@ hear it later. If a background job needs your go-ahead for an action that
 changes something, it asks about that specific action, and only one such
 question is open at a time.
 
-Not built yet: cancelling a job by voice ("never mind that") and interrupting
-while it is *speaking* (that needs echo cancellation, see the design notes).
+Not built yet: cancelling a job by voice ("never mind that").
+
+### Interrupting it
+
+With **headphones**, just start talking while it speaks: it stops at once, hears you out, and
+treats what you said as your next request. It needs a real burst of speech (a cough or a click does not
+count). Without headphones it would hear its own voice and cut itself off, so it is **on by default only
+when the output device looks like headphones** (names containing headphones, headset, AirPods, buds...).
+Press `b` at the prompt to turn it on or off, or set `SUTRA_BARGE_IN=on|off|auto`. Real echo
+cancellation (a speakerphone with it built in) is what would make this work on speakers.
+
+### Names it mishears
+
+Speech recognition is poor at names it has never seen ("Orem" heard as "Zoram"). In cloud mode the
+recognizer is given a vocabulary hint: your assistant's name, anything you list in `SUTRA_STT_HINTS`
+(comma-separated, e.g. `Orem, Provo`), and proper nouns from what you have told Sutra to remember
+(only those words are sent). If a name still sounds odd, Sutra says what it heard and asks you to repeat or spell it.
 
 **Cloud mode** (default when `OPENAI_API_KEY` is set) uses OpenAI
 `gpt-4o-transcribe` to hear you and `gpt-4o-mini-tts` to speak. Your recorded
@@ -285,6 +306,8 @@ If `OPENAI_API_KEY` is not set, voice starts in private mode.
 | `SUTRA_MAX_BACKGROUND` | Background jobs allowed at once. Default 2. |
 | `SUTRA_WAIT_NOTICE_DELAY` | Seconds before it says it is still working and invites another question. Default 4. |
 | `SUTRA_FILLER_DELAY` | Seconds before a slow reply gets a spoken "hmm, one sec". Default 1.5. |
+| `SUTRA_BARGE_IN` | `auto` (on for headphones), `on`, or `off`: stop speaking when you start talking. |
+| `SUTRA_STT_HINTS` | Extra names for the recognizer, comma-separated. |
 | `SUTRA_RECORD_AUDIO_DIR` | If set, each recording is saved there. Off by default. |
 
 A doubtful transcript (empty, or under the confidence threshold) never reaches

@@ -32,12 +32,15 @@ class ParsedReminder:
     text: str
 
 
-_LEAD = re.compile(
-    r"^\s*(?:(?:hey|ok|okay)\s+\w+[,\s]+)?"
-    r"(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?"
-    r"(?:remind\s+me|set\s+(?:a|an|me\s+a)\s+reminder)\b[,\s]*",
-    re.IGNORECASE,
+_PHRASE = re.compile(r"\b(?:remind\s+me|set\s+(?:a|an|me\s+a)\s+reminder)\b[,\s]*", re.IGNORECASE)
+# Words that may come before "remind me" in ordinary speech ("so lets remind me ...", "okay, so can
+# you please remind me ..."). Anything else before it (a negation, a question) means it is not a request.
+_LEAD_WORDS = frozenset(
+    "so um uh er ok okay alright hey hi yo well yeah yes now then and but please just can could would "
+    "will you lets let let's us i i'd id want need like to go ahead and also actually sutra".split()
 )
+_GREETING = frozenset({"hey", "hi", "yo", "ok", "okay"})  # the word after one may be a name
+MAX_LEAD_WORDS = 8
 # "remind me what/how..." is a question, not a request to set a reminder.
 _QUESTION = re.compile(r"^(?:of|about\s+what|what|how|who|why|when|where|which)\b", re.IGNORECASE)
 
@@ -52,6 +55,17 @@ _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
 _MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august",
            "september", "october", "november", "december"]
 
+_HOUR_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}
+# "at nine", "at nine o'clock": speech recognition often writes the hour as a word.
+_AT_WORD = re.compile(
+    r"\bat\s+(" + "|".join(_HOUR_WORDS) + r")(?:\s+o'?clock)?\b(?!\s+(?:point|time|least|most|all|once|first|home|work|school))",
+    re.IGNORECASE,
+)
+_BARE_HOUR = re.compile(r"\bat\s+(?P<hour>\d{1,2})\b(?![:\d])(?!\s*(?:a\.?m|p\.?m|o'?clock))", re.IGNORECASE)
+
 _HALF_HOUR = re.compile(r"\bin\s+half\s+an?\s+hour\b", re.IGNORECASE)
 _RELATIVE = re.compile(
     rf"\bin\s+(?P<amount>{_NUM})\s*(?P<unit>minutes?|mins?|hours?|hrs?)\b", re.IGNORECASE
@@ -62,9 +76,13 @@ _DAY = re.compile(
     r"|(?:on\s+)?(?P<month>" + "|".join(_MONTHS) + r")\s+(?P<mday>\d{1,2})(?:st|nd|rd|th)?)\b",
     re.IGNORECASE,
 )
-_DAYPART = re.compile(r"\b(?:this\s+)?(?P<part>morning|afternoon|evening)\b", re.IGNORECASE)
+_DAYPART = re.compile(
+    r"\b(?:(?:in\s+the|this|at)\s+)?(?P<part>morning|afternoon|evening|night)\b", re.IGNORECASE
+)
 _AT_TOD = re.compile(rf"\b(?:at\s+)?(?P<tod>{_TOD})(?!\w)", re.IGNORECASE)
-_AT_BARE = re.compile(r"\bat\s+(?P<hour>\d{1,2})\b(?!:)", re.IGNORECASE)
+_AT_BARE = re.compile(
+    r"\bat\s+(?P<hour>\d{1,2})\b(?![:\d])(?!\s*(?:a\.?m|p\.?m|o'?clock))", re.IGNORECASE
+)
 
 DEFAULT_HOUR = time(9, 0)  # a date with no time of day: 9am, and the reply says so
 
@@ -72,8 +90,16 @@ DEFAULT_HOUR = time(9, 0)  # a date with no time of day: 9am, and the reply says
 def reminder_request(utterance: str) -> str | None:
     """Return what follows "remind me" (or "set a reminder") in an utterance,
     or None if the utterance is not a reminder request."""
-    match = _LEAD.match(utterance)
+    match = _PHRASE.search(utterance)
     if match is None:
+        return None
+    lead = [w.strip(".,!?;:\"'").lower() for w in utterance[: match.start()].split()]
+    lead = [w for w in lead if w]
+    if len(lead) > MAX_LEAD_WORDS:
+        return None
+    for i, word in enumerate(lead):
+        if word in _LEAD_WORDS or (i > 0 and lead[i - 1] in _GREETING):
+            continue  # a filler word, or a name right after "hey"
         return None
     rest = utterance[match.end() :].strip()
     if _QUESTION.match(rest):
@@ -113,11 +139,11 @@ def _at_on(day_offset: int, tod: time, now: datetime, tz: ZoneInfo) -> datetime:
 
 def _clean(text: str) -> str:
     """Reminder text left after the time words are cut out."""
-    text = re.sub(r"\s+", " ", text).strip(" ,.;")
+    text = re.sub(r"\s+", " ", text).strip(" ,.;?!")
     text = re.sub(r"^(?:(?:to|for|that)\s+)+", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+(?:on|at|in|by|for)$", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^(?:on|at|in|by)\s+", "", text, flags=re.IGNORECASE)
-    return text.strip(" ,.;")
+    return text.strip(" ,.;?!")
 
 
 def _cut(text: str, spans: list[tuple[int, int]]) -> str:
@@ -165,7 +191,7 @@ def parse_request(request: str, now: datetime, tz: ZoneInfo) -> ParsedReminder |
     the time cannot be pinned down exactly, or is given twice, so the caller
     asks instead of guessing.
     """
-    text = request.strip()
+    text = _AT_WORD.sub(lambda m: f"at {_HOUR_WORDS[m.group(1).lower()]}", request.strip())
     if not text:
         return None
     local_now = now.astimezone(tz)
@@ -218,7 +244,7 @@ def parse_request(request: str, now: datetime, tz: ZoneInfo) -> ParsedReminder |
     elif bare:
         # A bare hour ("at 8") is only clear with a part of day ("tonight", "this morning").
         hour = int(bare[0].group("hour"))
-        pm = tonight or part in ("afternoon", "evening")
+        pm = tonight or part in ("afternoon", "evening", "night")
         if not 1 <= hour <= 12 or not (pm or part == "morning"):
             return None
         tod = time(hour % 12 + (12 if pm else 0), 0)
@@ -248,3 +274,39 @@ def parse_request(request: str, now: datetime, tz: ZoneInfo) -> ParsedReminder |
     if fire_at <= local_now:
         return None  # "today at" a time that has gone: ask, do not roll over
     return ParsedReminder(fire_at, rest)
+
+
+@dataclass(frozen=True)
+class BareHour:
+    """A request whose only problem is an hour with no am or pm ("tomorrow at 9")."""
+
+    chosen: ParsedReminder | None  # set when only one reading is possible, or none is a day away
+    am: ParsedReminder | None
+    pm: ParsedReminder | None
+
+
+def resolve_bare_hour(request: str, now: datetime, tz: ZoneInfo) -> BareHour | None:
+    """Read a bare hour both ways. None if that is not what is wrong with the request.
+
+    With no day named ("at 8"), the nearest future reading is chosen and the reply states it, so a wrong
+    guess is heard at once. With a day named ("tomorrow at 9") both readings are real, so the caller asks.
+    """
+    text = _AT_WORD.sub(lambda m: f"at {_HOUR_WORDS[m.group(1).lower()]}", request.strip())
+    matches = list(_BARE_HOUR.finditer(text))
+    if len(matches) != 1 or not 1 <= int(matches[0].group("hour")) <= 12:
+        return None
+    m = matches[0]
+    readings = []
+    for suffix in ("am", "pm"):
+        variant = f"{text[: m.end()]} {suffix}{text[m.end():]}"
+        readings.append(parse_request(variant, now, tz))
+    am, pm = readings
+    if am is None and pm is None:
+        return None
+    if am is None or pm is None:
+        return BareHour(am or pm, am, pm)  # the other reading has already gone by
+    if _DAY.search(text):
+        return BareHour(None, am, pm)  # "tomorrow at 9": a real choice
+    # "at 8": the next one coming, preferring waking hours so "at one" is never 1 in the morning.
+    awake = [r for r in (am, pm) if 7 <= r.fire_at.astimezone(tz).hour <= 22] or [am, pm]
+    return BareHour(min(awake, key=lambda r: r.fire_at), am, pm)

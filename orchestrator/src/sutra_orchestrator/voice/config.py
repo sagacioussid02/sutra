@@ -32,6 +32,8 @@ class VoiceConfig:
     conversation: bool = True
     max_background: int = 2
     wait_notice_delay: float = 4.0
+    stt_hints: tuple[str, ...] = ()
+    barge_in: str = "auto"  # "on", "off" or "auto" (on for headphones)
 
 
 def _float(env: Mapping[str, str], name: str, default: float, lo: float, hi: float) -> float:
@@ -56,6 +58,17 @@ def _flag(env: Mapping[str, str], name: str, default: bool) -> bool:
     if raw in ("0", "false", "no", "off"):
         return False
     raise ConfigError(f"{name} must be on or off, got {raw!r}")
+
+
+def _barge_in(env: Mapping[str, str]) -> str:
+    raw = (env.get("SUTRA_BARGE_IN") or "auto").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return "on"
+    if raw in ("0", "false", "no"):
+        return "off"
+    if raw not in ("on", "off", "auto"):
+        raise ConfigError(f"SUTRA_BARGE_IN must be on, off or auto, got {raw!r}")
+    return raw
 
 
 def load_voice_config(
@@ -88,4 +101,6 @@ def load_voice_config(
         conversation=_flag(merged, "SUTRA_CONVERSATION", True),
         max_background=int(_float(merged, "SUTRA_MAX_BACKGROUND", 2, 0, 5)),
         wait_notice_delay=_float(merged, "SUTRA_WAIT_NOTICE_DELAY", 4.0, 0.0, 60.0),
+        stt_hints=tuple(h.strip() for h in (merged.get("SUTRA_STT_HINTS") or "").split(",") if h.strip()),
+        barge_in=_barge_in(merged),
     )
