@@ -27,6 +27,8 @@ from ..personality import PersonalityService, PersonalityStore
 from ..life import LifeService, LifeStore
 from ..feeds import build_feeds
 from ..hangout import HangoutService, HttpGroupClient, parse_voices
+from ..safety import Mode, SafetyService
+from .wake import WakeMatcher
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
 from .config import load_voice_config
@@ -153,6 +155,12 @@ async def _run(verbose: bool) -> int:
             if config.gossip_url
             else None
         )
+        safety = SafetyService(
+            _memory_dir(config.safety_dir),
+            start=Mode(config.start_mode),
+            extra_tools=config.limited_tools,
+            duress_phrase=config.duress_phrase,
+        )
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -178,12 +186,22 @@ async def _run(verbose: bool) -> int:
             life=life,
             feeds=feeds,
             hangout=hangout,
+            safety=safety,
+            assistant_gender=config.assistant_gender,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
             persona=load_prompt("persona.md").format(name=vc.assistant_name),
             spoken_reasks=True,
         )
+        # Every unprompted or outward-reaching path asks the one mode before it acts.
+        quiet = lambda: not safety.proactive_ok  # noqa: E731
+        if offers is not None:
+            offers.arbiter.set_quiet(quiet)
+        if feeds is not None:
+            feeds.set_quiet(quiet)
+        if idle is not None:
+            idle.set_quiet(quiet)
         count = await orchestrator.start()
         print(f"Connected to the gateway. {count} tools available. I'm {vc.assistant_name}.")
         settings = VoiceSettings(
@@ -196,6 +214,7 @@ async def _run(verbose: bool) -> int:
             record_dir=Path(vc.record_dir).expanduser() if vc.record_dir else None,
             barge_in=output_is_headphones() if vc.barge_in == "auto" else vc.barge_in == "on",
             stream=vc.stream_reply,
+            activation=config.activation,
         )
         session = VoiceSession(
             orchestrator,
@@ -213,6 +232,9 @@ async def _run(verbose: bool) -> int:
         if offers is not None:
             session.attach_offers(offers)
             offers.start_task()
+        session.attach_safety(safety)
+        if config.activation == "wake":
+            session.attach_wake(WakeMatcher(config.wake_words))
         if lessons is not None:
             lessons.start_task()
         if life is not None:

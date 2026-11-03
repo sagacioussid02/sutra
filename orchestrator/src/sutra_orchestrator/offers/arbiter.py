@@ -8,6 +8,7 @@ while another is open, and the user's own stops, which are final.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -30,6 +31,11 @@ class Arbiter:
         self._store = store
         self._tz = tz
         self._daily_max = daily_max
+        self._quiet: Callable[[], bool] = lambda: False
+
+    def set_quiet(self, quiet: Callable[[], bool]) -> None:
+        """Something outside (the safety mode) can silence every unprompted offer at once."""
+        self._quiet = quiet
 
     def enabled(self) -> bool:
         return self._store.get_meta("enabled") != "0"
@@ -61,6 +67,8 @@ class Arbiter:
     ) -> Permit:
         if not self.enabled():
             return Permit(False, "offers are off")
+        if self._quiet():
+            return Permit(False, "the assistant is not in full mode")
         if action_pending:
             return Permit(False, "an action is awaiting confirmation")
         if open_offer:

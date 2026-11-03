@@ -60,6 +60,10 @@ class FeedService:
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._task: asyncio.Task[None] | None = None
         self._store = offers.store  # small key-value state lives with the offers
+        self._quiet: Callable[[], bool] = lambda: False
+
+    def set_quiet(self, quiet: Callable[[], bool]) -> None:
+        self._quiet = quiet
 
     # ---------------------------------------------------------------- settings
 
@@ -174,7 +178,9 @@ class FeedService:
         return 0
 
     async def poll(self) -> None:
-        """One pass over the feeds that are on. Never raises."""
+        """One pass over the feeds that are on. Never raises. Makes no outside request unless in full mode."""
+        if self._quiet():
+            return
         for step in (self.poll_weather, self.poll_news):
             try:
                 await step()

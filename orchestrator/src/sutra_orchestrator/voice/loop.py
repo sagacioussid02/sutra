@@ -21,6 +21,7 @@ from pathlib import Path
 from ..classifier import AFFIRM, DENY
 from ..hangout import HangoutReply
 from ..i18n import detect, heard as heard_line, localize
+from ..safety import Mode, SafetyService
 from ..orchestrator import Orchestrator
 from .types import Engines, Recorder, Transcript, VoiceError
 
@@ -52,6 +53,7 @@ class VoiceSettings:
     conversation: bool = True
     fillers: tuple[str, ...] = DEFAULT_FILLERS
     record_dir: Path | None = None
+    activation: str = "button"  # "button" (Enter) or "wake" (also listen locally for the wake phrase)
     stream: bool = False  # speak the reply sentence by sentence while the model writes it
     barge_in: bool = False  # speak-over: stop talking when the user starts (headphones only)
 
@@ -150,6 +152,9 @@ class VoiceSession:
         self._on_reminder_spoken = on_reminder_spoken
         self._read_task: asyncio.Future | None = None
         self._barge_in = settings.barge_in
+        self._safety: SafetyService | None = None
+        self._wake = None  # WakeMatcher, attached by the caller
+        self._wake_task: asyncio.Future | None = None
         self._last_cut = False
         self._stt_seconds = 0.0
         self._first_words_at: float | None = None
@@ -163,6 +168,21 @@ class VoiceSession:
         self._interests = service
         service.set_on_offer(self._notify.set)
 
+    def attach_safety(self, safety: SafetyService) -> None:
+        """Let the mode silence the microphone and unprompted speech. Keys can lower or raise it."""
+        self._safety = safety
+        safety.on_change(lambda mode: self._notify.set())
+
+    def attach_wake(self, matcher) -> None:
+        """Also listen locally for a wake phrase while idle (audio goes nowhere until it is heard)."""
+        self._wake = matcher
+
+    def _off(self) -> bool:
+        return self._safety is not None and self._safety.mode is Mode.OFF
+
+    def _proactive_ok(self) -> bool:
+        return self._safety is None or self._safety.proactive_ok
+
     def attach_offers(self, service) -> None:
         """Let ready outside signals be said at quiet moments, in words the judge chose."""
         self._offers = service
@@ -171,7 +191,8 @@ class VoiceSession:
     async def _maybe_timely(self) -> bool:
         """Say a ready timely offer if the moment is quiet. The answer is read by the next turn."""
         if (
-            self._offers is None
+            not self._proactive_ok()
+            or self._offers is None
             or self._i_offer is not None
             or self._offer is not None
             or self._fg.open_offer is not None
@@ -187,7 +208,7 @@ class VoiceSession:
         return True
 
     async def _maybe_interest_offer(self) -> bool:
-        if self._interests is None or self._i_offer is not None or self._offer is not None:
+        if not self._proactive_ok() or self._interests is None or self._i_offer is not None or self._offer is not None:
             return False
         offer = self._interests.next_offer()
         if offer is None:
@@ -260,7 +281,12 @@ class VoiceSession:
         self._out(
             f"Voice is on ({self.engines.label}). Enter = start talking ({how}), "
             "p = switch private/cloud, b = interrupting on/off, q = quit."
+            + (", f/s/m = full/limited/off mode." if self._safety is not None else "")
         )
+        if self._safety is not None and self._safety.mode is not Mode.FULL:
+            self._out(f"  Mode: {self._safety.mode.value} (press f for full).")
+        if self._wake is not None:
+            self._out("  Also listening for the wake word. Audio stays on this machine until you say it.")
         self._out(
             "  Interrupting is "
             + ("on: just start talking while I speak." if self._barge_in else "off (press b to turn it on; use headphones, or I will hear myself).")
@@ -278,7 +304,17 @@ class VoiceSession:
             if cmd == "b":
                 self._toggle_barge_in()
                 continue
+            if cmd in ("f", "s", "m") and self._safety is not None:
+                # Keys need a person at the keyboard, which is why they may raise the mode as well as lower it.
+                self._safety.restore({"f": Mode.FULL, "s": Mode.LIMITED, "m": Mode.OFF}[cmd])
+                self._out(f"  Mode: {self._safety.mode.value}.")
+                if self._off():
+                    self._recorder.release()
+                continue
             if cmd:
+                continue
+            if self._off():
+                self._out("  I'm switched off. Press f for full, s for limited.")
                 continue
             await self._conversation()
 
@@ -287,29 +323,89 @@ class VoiceSession:
         if self._read_task is None:
             self._read_task = asyncio.ensure_future(self._read("[Enter to talk]> "))
         while True:
-            if self._reminders:
+            if self._reminders and not self._off():
                 await self._speak_reminders()
+            self._ensure_wake()
             waiter = asyncio.ensure_future(self._notify.wait())
-            await asyncio.wait({self._read_task, waiter}, return_when=asyncio.FIRST_COMPLETED)
+            wait_for = {self._read_task, waiter} | ({self._wake_task} if self._wake_task else set())
+            await asyncio.wait(wait_for, return_when=asyncio.FIRST_COMPLETED)
             waiter.cancel()
             if self._read_task.done():
+                await self._stop_wake()
                 task, self._read_task = self._read_task, None
-                return task.result()
+                return task.result()  # the button always works, in every mode
+            if self._wake_task is not None and self._wake_task.done():
+                woke, self._wake_task = self._wake_task.result(), None
+                if woke is not None:
+                    await self._conversation(carry=await self._wake_carry(woke))
+                continue
             self._notify.clear()
+            if self._off():
+                continue
             if self._next_offerable() is not None or (
-                self._interests is not None and self._interests.next_offer() is not None
+                self._proactive_ok() and self._interests is not None and self._interests.next_offer() is not None
             ):
+                await self._stop_wake()
                 await self._conversation(announce=True)
-            elif self._offers is not None and self._offers.has_ready():
+            elif self._proactive_ok() and self._offers is not None and self._offers.has_ready():
+                await self._stop_wake()
                 await self._conversation(announce=True)
 
-    async def _conversation(self, announce: bool = False) -> None:
+    # ------------------------------------------------------------------ wake word
+
+    def _ensure_wake(self) -> None:
+        if self._wake is None or self._off() or self._wake_task is not None:
+            return
+        self._wake_task = asyncio.ensure_future(self._listen_for_wake())
+
+    async def _stop_wake(self) -> None:
+        task, self._wake_task = self._wake_task, None
+        if task is None or task.done():
+            return
+        self._recorder.cancel()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def _listen_for_wake(self) -> tuple[bytes, str, float] | None:
+        """Listen on this machine for the wake phrase. Nothing is sent anywhere until it is heard."""
+        try:
+            while not self._off():
+                self._recorder.start()
+                try:
+                    await asyncio.to_thread(self._recorder.wait_done)
+                finally:
+                    wav = self._recorder.stop()
+                if not wav:
+                    await asyncio.sleep(0.05)
+                    continue
+                heard = await self._local.transcriber.transcribe(wav)  # the local recognizer, never the cloud
+                rest = self._wake.match(heard.text) if self._wake else None
+                if rest is not None:
+                    return wav, rest, heard.confidence
+        except VoiceError as exc:
+            self._out(f"  The wake word is unavailable ({exc}). Press Enter to talk instead.")
+            self._wake = None
+        return None
+
+    async def _wake_carry(self, woke: tuple[bytes, str, float]) -> Transcript | None:
+        """What was said after the wake phrase, as the first turn; or "Yes?" and a normal listen if nothing was."""
+        wav, rest, confidence = woke
+        if len(rest.split()) < 2:
+            await self._say("Yes?")
+            return None
+        try:  # now it has been addressed, the main recognizer hears the same audio for accuracy
+            again = await self.engines.transcriber.transcribe(wav)
+            text = self._wake.match(again.text) if self._wake else None
+            return Transcript(text or rest, again.confidence)
+        except VoiceError:
+            return Transcript(rest, confidence)
+
+    async def _conversation(self, announce: bool = False, carry: Transcript | None = None) -> None:
         """Take turns. In conversation mode keep listening after each reply until you go quiet."""
         try:
             if announce and not await self._maybe_offer():
                 if not await self._maybe_timely():
                     await self._maybe_interest_offer()
-            carry: Transcript | None = None
             while True:
                 try:
                     answered, carry = await self._turn(carry)
@@ -318,6 +414,8 @@ class VoiceSession:
                     return
                 if carry is not None:
                     continue
+                if self._off():
+                    return  # switched off mid-conversation: stop listening now
                 if self._reminders:
                     await self._speak_reminders()  # between turns: nobody is talking
                 if not (answered and self._s.conversation and self._recorder.auto_stop):
@@ -680,7 +778,7 @@ class VoiceSession:
         return None
 
     async def _maybe_offer(self, include_declined: bool = False) -> bool:
-        if self._offer is not None:
+        if self._offer is not None or self._off():
             return False
         notice = self._next_offerable(include_declined)
         if notice is None:

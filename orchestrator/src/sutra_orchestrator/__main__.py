@@ -26,6 +26,7 @@ from .personality import HumorCommands, PersonalityService, PersonalityStore
 from .life import LifeCommands, LifeService, LifeStore
 from .feeds import FeedCommands, build_feeds
 from .hangout import HangoutCommands, HangoutService, HttpGroupClient, parse_voices
+from .safety import Mode, ModeCommands, SafetyService
 from .agents.factory import build_agent_service
 from .reminders import ReminderScheduler, ReminderService, ReminderStore
 from .reminders.commands import ReminderCommands
@@ -139,6 +140,13 @@ async def _run(verbose: bool) -> int:
             else None
         )
         hangout_commands = HangoutCommands(hangout, config.gossip_url) if hangout is not None else None
+        safety = SafetyService(
+            _memory_dir(config.safety_dir),
+            start=Mode(config.start_mode),
+            extra_tools=config.limited_tools,
+            duress_phrase=config.duress_phrase,
+        )
+        mode_commands = ModeCommands(safety)
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -151,7 +159,7 @@ async def _run(verbose: bool) -> int:
         commands = CommandSet(
             reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands,
             idle_commands, lesson_commands, humor_commands, life_commands,
-            feed_commands, hangout_commands, memory_commands
+            feed_commands, hangout_commands, mode_commands, memory_commands
         )
         orchestrator = Orchestrator(
             model=model,
@@ -168,6 +176,8 @@ async def _run(verbose: bool) -> int:
             life=life,
             feeds=feeds,
             hangout=hangout,
+            safety=safety,
+            assistant_gender=config.assistant_gender,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
@@ -205,8 +215,18 @@ async def _run(verbose: bool) -> int:
                     )
 
             interests.set_on_offer(announce)
+        # Every unprompted or outward-reaching path asks the one mode before it acts.
+        quiet = lambda: not safety.proactive_ok  # noqa: E731
+        if offers is not None:
+            offers.arbiter.set_quiet(quiet)
+        if feeds is not None:
+            feeds.set_quiet(quiet)
+        if idle is not None:
+            idle.set_quiet(quiet)
         count = await orchestrator.start()
         print(f"Connected to the gateway. {count} tools available. Blank line to quit.")
+        if safety.mode is not Mode.FULL:
+            print(f"Mode is {safety.mode.value}. Type /mode full to go back to full.")
         if memory is not None:
             known = sum(1 for m in memory.list_memories() if m.status == "active")
             print(f"Memory is on ({known} remembered). Type /help for memory commands.")

@@ -557,3 +557,29 @@ The connection is a small client for the app's REST API, behind an interface, so
 | --- | --- | --- |
 | `SUTRA_GOSSIP_URL` | none | the gossip app's local address; off when empty |
 | `SUTRA_HANGOUT_VOICES` | built-in | per-friend voices, `Name=voice` pairs |
+
+## Modes, the wake word, and the off switch
+
+Sutra has three modes, saved so a restart never silently goes back to a higher one:
+
+| Mode | What it does |
+| --- | --- |
+| **full** | Everything. |
+| **limited** | Answers and looks things up only. Gateway tools that only read (`get`, `list`, `show`, `find`, `search`, `view`, `status`, `check`, ...) work; anything that changes something does not exist for it, and the research tool is gone. Nothing unprompted: no offers, check-ins, heads-ups or questions, no idle research, no feed requests, no group chat. |
+| **off** | Not listening and not answering (one line saying so). Reminders still fire quietly. |
+
+- **Lowering is instant; raising is deliberate.** Say **"safe mode"** or **"limited mode"** (also सेफ मोड) for limited, or **"go quiet"**, **"stop listening"**, **"mute yourself"**, **"switch off"** (चुप हो जाओ) for off. These work even on a mumbled transcript and only as a whole short sentence ("the safe mode setting on my car" does nothing). Any action waiting for your yes is cancelled, and Sutra tells the model so, so it cannot claim the thing "may have gone through". **No spoken phrase can raise the mode**: use the keyboard, `/mode full|limited|off` in the text client or the keys `f`, `s`, `m` in the voice client.
+- **Which tools count as reading.** The gateway does not tell the orchestrator a tool's tier, so limited mode uses the tool's name: after the project prefix, the first word must be a reading verb. `finanxe_list_debts` and `finanxe_get_snapshot` pass; `finanxe_create_goal`, `finanxe_add_calendar_event`, `twin_chat` and any name it does not recognize are blocked. Add exceptions with `SUTRA_LIMITED_TOOLS=twin_chat`.
+- **A silent distress phrase.** Set `SUTRA_DURESS_PHRASE="something only you would say"` (at least two words; never shown or logged). Saying it anywhere in a sentence drops Sutra to limited **without announcing it**: the rest of what you said is handled normally, but nothing that changes anything can happen, and if asked, Sutra only says it can't do that right now. Only the keyboard restores it.
+- **Activation.** `SUTRA_ACTIVATION=button` (default): press Enter. `wake`: it also listens for **"Hey Sutra"** (`SUTRA_WAKE_WORDS` changes it). Listening for the wake word is local: each spoken segment is transcribed by the local recognizer on this machine, nothing goes to the cloud until the wake phrase is heard, and the same audio is then heard by the main recognizer for accuracy. The wake phrase must lead the sentence, so the name inside a longer sentence does not wake it. Enter always works. It needs the local recognizer (`uv pip install -e ".[voice-local]"`, and a multilingual model if you speak Hindi); without it Sutra says so and stays on the button. Expect to tune it: a small speech model mishears an unusual name now and then. An always-on mode with no wake word is not built yet; it comes after this has proved itself, with limited mode as its fallback.
+- **First-person Hindi** uses the form set by `SUTRA_ASSISTANT_GENDER` (`feminine` by default, `masculine` or `neutral`).
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_START_MODE` | `full` | mode when nothing is saved yet |
+| `SUTRA_LIMITED_TOOLS` | none | extra tool names allowed in limited mode |
+| `SUTRA_DURESS_PHRASE` | none | the private phrase that silently limits Sutra |
+| `SUTRA_ACTIVATION` | `button` | `button` or `wake` |
+| `SUTRA_WAKE_WORDS` | `hey sutra,sutra` | the wake phrases |
+| `SUTRA_ASSISTANT_GENDER` | `feminine` | for first-person Hindi |
+| `SUTRA_SAFETY_DIR` | the memory directory | where the saved mode lives |
