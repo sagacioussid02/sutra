@@ -86,6 +86,7 @@ class VoiceSession:
         start_private: bool = False,
         read: Callable[[str], Awaitable[str]] | None = None,
         out: Callable[[str], None] = print,
+        on_reminder_spoken: Callable[[object], None] | None = None,
     ) -> None:
         self._fg = orchestrator
         self._recorder = recorder
@@ -102,11 +103,32 @@ class VoiceSession:
         self._offer: Notice | None = None
         self._awaiting: Orchestrator | None = None  # lane whose held action the user is answering
         self._notify = asyncio.Event()
+        self._reminders: deque[tuple[object, str, bool]] = deque()
+        self._on_reminder_spoken = on_reminder_spoken
         self._read_task: asyncio.Future | None = None
 
     @property
     def engines(self) -> Engines:
         return self._local if self._state.private else self._cloud  # type: ignore[return-value]
+
+    def deliver_reminder(self, entry: object, text: str, late: bool = False) -> None:
+        """Queue a fired reminder. It is spoken at the next quiet moment, not asked about."""
+        self._reminders.append((entry, text, late))
+        self._notify.set()
+
+    async def _speak_reminders(self) -> None:
+        """Say queued reminders. Only called when nobody is talking and nothing is recording."""
+        while self._reminders:
+            entry, text, late = self._reminders.popleft()
+            line = (
+                f"Sorry, this one is late. You asked me to remind you: {text}."
+                if late
+                else f"Reminder: {text}."
+            )
+            self._out(f"sutra> {line}")
+            await self._say(line)
+            if self._on_reminder_spoken is not None:
+                self._on_reminder_spoken(entry)
 
     # ------------------------------------------------------------------ main loop
 
@@ -136,6 +158,8 @@ class VoiceSession:
         if self._read_task is None:
             self._read_task = asyncio.ensure_future(self._read("[Enter to talk]> "))
         while True:
+            if self._reminders:
+                await self._speak_reminders()
             waiter = asyncio.ensure_future(self._notify.wait())
             await asyncio.wait({self._read_task, waiter}, return_when=asyncio.FIRST_COMPLETED)
             waiter.cancel()
@@ -160,6 +184,8 @@ class VoiceSession:
                     return
                 if carry is not None:
                     continue
+                if self._reminders:
+                    await self._speak_reminders()  # between turns: nobody is talking
                 if not (answered and self._s.conversation and self._recorder.auto_stop):
                     return
         finally:

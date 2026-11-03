@@ -71,7 +71,11 @@ async def _run(verbose: bool) -> int:
         if config.reminders_enabled:
             reminder_store = ReminderStore(_memory_dir(config.reminders_dir))
             reminders = ReminderService(reminder_store, ZoneInfo(config.reminders_tz))
-            reminder_scheduler = ReminderScheduler(reminder_store)
+
+            def deliver(entry) -> None:
+                session.deliver_reminder(entry, entry.text, entry.late)
+
+            reminder_scheduler = ReminderScheduler(reminder_store, on_deliver=deliver)
         orchestrator = Orchestrator(
             model=model,
             gateway=gateway,
@@ -100,12 +104,16 @@ async def _run(verbose: bool) -> int:
             MicRecorder(
                 auto_stop=vc.auto_stop, silence_ms=vc.silence_ms, no_speech_ms=vc.no_speech_ms
             ),
-            cloud, local, settings, start_private=vc.start_private
+            cloud, local, settings, start_private=vc.start_private,
+            on_reminder_spoken=(
+                (lambda entry: reminder_store.mark_seen(entry.id)) if reminder_store else None
+            ),
         )
-        if reminder_scheduler is not None:
-            # Fired reminders land in the inbox (see /inbox in the REPL);
-            # spoken announcement of a fired reminder is future work that
-            # must go through the ask-first notification path.
+        if reminder_scheduler is not None and reminder_store is not None:
+            # Reminders that fired but were never heard (the last run ended
+            # first) are said now, marked late.
+            for entry in reminder_store.list_inbox(unseen_only=True):
+                session.deliver_reminder(entry, entry.text, late=True)
             reminder_scheduler.start_task()
         try:
             await session.run()
