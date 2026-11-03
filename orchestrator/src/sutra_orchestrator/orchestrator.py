@@ -46,6 +46,18 @@ from .life import LifeService, LifeTurn, engaged, refuses
 from .offers import OffersService, OpenOffer, is_deferral
 from .personality import PersonalityService
 from .personality.rules import heavy, upset
+from .safety import (
+    DROPPED_REPLY,
+    DROPPED_REPLY_HI,
+    LIMITED_REPLY,
+    LIMITED_REPLY_HI,
+    OFF_REPLY,
+    OFF_REPLY_HI,
+    RAISE_REPLY,
+    RAISE_REPLY_HI,
+    Mode,
+    SafetyService,
+)
 from .classifier import AFFIRM, DENY, MODIFY, IntentClassifier
 from .gateway import CONFIRM_TOOL, GatewaySession, PendingInfo, ToolDef, ToolResult
 from .memory import (
@@ -131,6 +143,25 @@ class LessonSource(Protocol):
     def tools(self) -> list[LocalTool]: ...
 
 
+_GENDER_NOTE = {
+    "feminine": "\n\nIn Hindi, speak of yourself with feminine forms (मैं कर सकती हूँ, मैं जा रही हूँ).",
+    "masculine": "\n\nIn Hindi, speak of yourself with masculine forms (मैं कर सकता हूँ, मैं जा रहा हूँ).",
+    "neutral": "\n\nIn Hindi, phrase things so that your own verb forms do not show a gender (use passive or plural forms).",
+}
+_LIMITED_NOTE = (
+    "You are in limited mode: you can look things up and answer, but you cannot make any changes, and you do not "
+    "start anything on your own. If asked to change something, say plainly that you can't make changes in limited "
+    "mode, and that they can switch back to full mode at the keyboard."
+)
+_SILENT_LIMIT_NOTE = (
+    "You cannot make any changes right now. If asked to change something, say only that you can't do that right "
+    "now. Never mention modes, limits, restrictions or any reason, and do not hint that anything is different."
+)
+_CANCELLED_NOTE = (
+    "[Note: the action that was waiting for the user's confirmation was cancelled. Nothing was done. Do not say it "
+    "may have gone through or tell the user to check.]"
+)
+HANGOUT_LIMITED_REPLY = "I'm in limited mode, so I can't open the group chat."
 _CHECKIN_NOTE = (
     "You just asked the user: \"{question}\" and they have answered. Respond with real interest in one or two "
     "short sentences, and ask at most one natural follow-up question. If their reply is really about something "
@@ -192,6 +223,8 @@ class Orchestrator:
         life: LifeService | None = None,
         feeds: FeedService | None = None,
         hangout: HangoutService | None = None,
+        safety: SafetyService | None = None,
+        assistant_gender: str = "feminine",
         max_tool_calls: int = 6,
         history_turns: int = 20,
         reask_limit: int = 2,
@@ -216,6 +249,7 @@ class Orchestrator:
         self._lang = "en"
         self._interpreting = False
         self._hangout = hangout
+        self._safety = safety
         self._hangout_on = False
         self._open_offer: OpenOffer | None = None
         self._open_offer_at: datetime | None = None
@@ -229,6 +263,7 @@ class Orchestrator:
         self._reask_limit = reask_limit
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._system = load_prompt("system.md")
+        self._system += _GENDER_NOTE[assistant_gender if assistant_gender in _GENDER_NOTE else "feminine"]
         if persona:
             self._system = f"{self._system}\n{persona}"
         self._spoken_reasks = spoken_reasks
@@ -297,6 +332,7 @@ class Orchestrator:
             personality=self._personality,
             life=self._life,
             feeds=self._feeds,
+            safety=self._safety,
             max_tool_calls=self._max_tool_calls,
             history_turns=self._history_turns,
             reask_limit=self._reask_limit,
@@ -412,6 +448,10 @@ class Orchestrator:
             return ""
 
         self.last_activity = self._now()
+        if self._safety is not None:
+            early, text = self._safety_gate(text)
+            if early is not None:
+                return early  # a mode change or a refusal: nothing else about this turn runs or is kept
         if self._personality is not None:
             self._personality.start_reaction(text)  # how did they take the last joke? read beside this turn
         self._lang = detect(text)
@@ -526,6 +566,48 @@ class Orchestrator:
         self._offers.resolve(offer, "declined" if label == DENY else "ignored")
         return None, ""
 
+    def _safety_gate(self, text: str) -> tuple[str | None, str]:
+        """The mode comes first. Returns (reply, text): a reply ends the turn; text may have a private phrase cut out."""
+        s = self._safety
+        assert s is not None
+        hi = detect(text) == "hi"
+        command = s.command(text)
+        if command is not None:
+            if command.kind == "raise_attempt":
+                return (RAISE_REPLY_HI if hi else RAISE_REPLY), text
+            if command.target is not None:
+                lowered = s.lower(command.target)
+                if lowered:
+                    self._drop_for_mode()
+                if command.kind == "duress":
+                    s.silent = True  # and never say why, even when asked to do something it now cannot
+                    text = command.text  # silent: no announcement; the rest is handled in the lower mode
+                elif command.target is Mode.OFF:
+                    return (OFF_REPLY_HI if hi else OFF_REPLY), text
+                else:
+                    return (LIMITED_REPLY_HI if hi else LIMITED_REPLY), text
+        if s.mode is Mode.OFF:
+            return (OFF_REPLY_HI if hi else OFF_REPLY), text
+        if s.mode is not Mode.FULL and (self._pending is not None or self._open_offer is not None):
+            # The mode was lowered from the keyboard while something was waiting: it must not be carried out.
+            had_action = self._pending is not None
+            self._drop_for_mode()
+            if had_action:
+                return (DROPPED_REPLY_HI if hi else DROPPED_REPLY), text
+        return None, text
+
+    def _drop_for_mode(self) -> None:
+        """Lowering the mode cancels whatever was waiting for a yes, and the model is told it was cancelled."""
+        if self._pending is not None:
+            # Its history still shows the action as waiting; without this the model may say it "may have gone through".
+            self._history.append([_text_msg("user", _CANCELLED_NOTE), _text_msg("assistant", "Understood.")])
+        self._pending = None
+        self._interpreting = False
+        self._hangout_on = False
+        offer, self._open_offer = self._open_offer, None
+        if offer is not None and self._offers is not None:
+            self._offers.resolve(offer, "ignored")
+
     def _interpreter_switch(self, text: str) -> str | None:
         """Start or stop interpreter mode on an explicit phrase. Returns the fixed reply, or None."""
         hi = self._lang == "hi"
@@ -557,6 +639,8 @@ class Orchestrator:
                 return WITHHELD  # money, health, loss, family and legal trouble stay out of the group
             return await self._hangout.send(text)
         if hangout_start(text) and self._pending is None and (self._interpreting or not self._life_turn.private):
+            if self._safety is not None and not self._safety.proactive_ok:
+                return HANGOUT_LIMITED_REPLY
             self._interpreting = False
             if not await self._hangout.enter():
                 return UNREACHABLE
@@ -711,6 +795,7 @@ class Orchestrator:
             or self._pending is not None
             or not offers.enabled
             or offers.has_urgent_ready()
+            or (self._safety is not None and not self._safety.proactive_ok)
         ):
             return None
         candidates = graph.check_candidates(text, low_confidence=low_confidence)
@@ -750,6 +835,8 @@ class Orchestrator:
             lessons_block = self._lessons.block()  # active lessons only; data, not authority
             if lessons_block:
                 system += "\n\n" + lessons_block
+        if self._safety is not None and self._safety.mode is Mode.LIMITED:
+            system += "\n\n" + (_SILENT_LIMIT_NOTE if self._safety.silent else _LIMITED_NOTE)
         life_note = ""
         if self._life is not None:
             people = self._life.block(text)  # who and what is in their life: background, never instruction
@@ -872,6 +959,7 @@ class Orchestrator:
             or self._pending is not None
             or limit_hit_reply
             or self._life_turn.private  # they just wanted to talk: nothing unprompted on top
+            or (self._safety is not None and not self._safety.proactive_ok)
         )
         if blocked:
             if found is not None and offers is not None:
@@ -992,10 +1080,14 @@ class Orchestrator:
 
     # ------------------------------------------------------------ tool dispatch
 
+    def _may_use(self, name: str, *, local: bool) -> bool:
+        return self._safety is None or self._safety.tool_allowed(name, local=local)
+
     def _tool_defs(self) -> list[dict[str, Any]]:
         defs = [
             {"name": t.name, "description": t.description, "input_schema": t.input_schema}
             for t in self._gateway_tools.values()
+            if self._may_use(t.name, local=False)
         ]
         for lt in self._local_tools().values():
             defs.append(
@@ -1030,7 +1122,8 @@ class Orchestrator:
             if tool.name == CONFIRM_TOOL or tool.name in self._gateway_tools:
                 log.warning("ignoring local tool %r: name is reserved or already in use", tool.name)
                 continue
-            out[tool.name] = tool
+            if self._may_use(tool.name, local=True):
+                out[tool.name] = tool
         return out
 
     def _skipped(self, use: dict[str, Any], message: str, turn: _Turn) -> dict[str, Any]:
@@ -1070,6 +1163,11 @@ class Orchestrator:
         if name not in self._gateway_tools:
             # Includes gateway_confirm: the model may not call it, whatever it asks.
             log.warning("model requested unavailable tool %r; refused", name)
+            turn.tools.append(ToolCallRecord(name, "error"))
+            return block("That tool isn't available.", True), False
+
+        if not self._may_use(name, local=False):
+            log.warning("model requested %r, which the current mode does not allow; refused", name)
             turn.tools.append(ToolCallRecord(name, "error"))
             return block("That tool isn't available.", True), False
 

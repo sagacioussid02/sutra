@@ -61,6 +61,7 @@ class IdleResearcher:
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._home_area = home_area.strip()
+        self._quiet: Callable[[], bool] = lambda: False
         self._store = store
         self._interests = interests
         self._graph = graph
@@ -83,6 +84,9 @@ class IdleResearcher:
     def store(self) -> IdleStore:
         return self._store
 
+    def set_quiet(self, quiet: Callable[[], bool]) -> None:
+        self._quiet = quiet
+
     # ----------------------------------------------------------------- switch
 
     @property
@@ -98,6 +102,8 @@ class IdleResearcher:
     def blocker(self, *, force: bool = False) -> str | None:
         """Why a run may not start now, or None. ``force`` waives only the quiet-time test."""
         now = self._now()
+        if self._quiet():
+            return "the assistant is not in full mode"
         if not self.enabled:
             return "idle research is off"
         if self._interests is None or self._agents is None or self._offers is None:

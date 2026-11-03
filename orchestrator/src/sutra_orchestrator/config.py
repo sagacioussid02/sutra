@@ -50,6 +50,13 @@ class Config:
     offers_calls_per_day: int = 200
     offers_urgent_sources: tuple[str, ...] = ()
     gossip_url: str = ""
+    start_mode: str = "full"
+    limited_tools: tuple[str, ...] = ()
+    duress_phrase: str = field(default="", repr=False)  # never shown or logged
+    safety_dir: str = "data"
+    assistant_gender: str = "feminine"
+    activation: str = "button"
+    wake_words: tuple[str, ...] = ("hey sutra", "sutra")
     hangout_voices: str = ""
     feeds_enabled: bool = True
     home_area: str = ""
@@ -166,6 +173,13 @@ def load_config(
         offers_urgent_sources=tuple(
             t.strip() for t in (merged.get("SUTRA_OFFERS_URGENT_SOURCES") or "").split(",") if t.strip()
         ),
+        start_mode=_choice(merged, "SUTRA_START_MODE", "full", ("full", "limited", "off")),
+        limited_tools=tuple(t.strip() for t in (merged.get("SUTRA_LIMITED_TOOLS") or "").split(",") if t.strip()),
+        duress_phrase=_duress(merged),
+        safety_dir=merged.get("SUTRA_SAFETY_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
+        assistant_gender=_choice(merged, "SUTRA_ASSISTANT_GENDER", "feminine", ("feminine", "masculine", "neutral")),
+        activation=_choice(merged, "SUTRA_ACTIVATION", "button", ("button", "wake")),
+        wake_words=tuple(w.strip().lower() for w in (merged.get("SUTRA_WAKE_WORDS") or "hey sutra,sutra").split(",") if w.strip()),
         gossip_url=_gossip_url(merged),
         hangout_voices=merged.get("SUTRA_HANGOUT_VOICES", ""),
         feeds_enabled=_bool(merged, "SUTRA_FEEDS", True),
@@ -216,6 +230,20 @@ def _gossip_url(env: Mapping[str, str]) -> str:
         return check_url(raw)
     except ValueError as exc:
         raise ConfigError(f"SUTRA_GOSSIP_URL {exc}, got {raw!r}") from None
+
+
+def _choice(env: Mapping[str, str], name: str, default: str, allowed: tuple[str, ...]) -> str:
+    raw = (env.get(name) or default).strip().lower()
+    if raw not in allowed:
+        raise ConfigError(f"{name} must be one of {', '.join(allowed)}, got {raw!r}")
+    return raw
+
+
+def _duress(env: Mapping[str, str]) -> str:
+    phrase = " ".join((env.get("SUTRA_DURESS_PHRASE") or "").split())
+    if phrase and len(phrase.split()) < 2 and len(phrase) < 8:
+        raise ConfigError("SUTRA_DURESS_PHRASE must be a phrase of at least two words (or eight characters)")
+    return phrase
 
 
 def _units(env: Mapping[str, str]) -> str:
