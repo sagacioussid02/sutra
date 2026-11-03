@@ -9,6 +9,7 @@ loop asks first, and speaks the result only after you agree.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -43,6 +44,7 @@ class VoiceSettings:
     conversation: bool = True
     fillers: tuple[str, ...] = DEFAULT_FILLERS
     record_dir: Path | None = None
+    barge_in: bool = False  # speak-over: stop talking when the user starts (headphones only)
 
 
 @dataclass
@@ -110,6 +112,7 @@ class VoiceSession:
         self._reminders: deque[tuple[object, str, bool]] = deque()
         self._on_reminder_spoken = on_reminder_spoken
         self._read_task: asyncio.Future | None = None
+        self._barge_in = settings.barge_in
 
     @property
     def engines(self) -> Engines:
@@ -216,7 +219,11 @@ class VoiceSession:
         how = "it stops when you stop talking" if self._recorder.auto_stop else "Enter again to stop"
         self._out(
             f"Voice is on ({self.engines.label}). Enter = start talking ({how}), "
-            "p = switch private/cloud, q = quit."
+            "p = switch private/cloud, b = interrupting on/off, q = quit."
+        )
+        self._out(
+            "  Interrupting is "
+            + ("on: just start talking while I speak." if self._barge_in else "off (press b to turn it on; use headphones, or I will hear myself).")
         )
         while True:
             try:
@@ -227,6 +234,9 @@ class VoiceSession:
                 break
             if cmd == "p":
                 await self._toggle_private()
+                continue
+            if cmd == "b":
+                self._toggle_barge_in()
                 continue
             if cmd:
                 continue
@@ -374,7 +384,9 @@ class VoiceSession:
         )
         if reply is not None:
             self._out(f"sutra> {reply}")
-            await self._say(reply)
+            spoken_over = await self._say_reply(reply)
+            if interrupted is None and self._is_interruption(spoken_over):
+                interrupted = spoken_over  # what they said over me is their next turn
             # Memory work (like extracting what you said) must not delay listening.
             self._in_background(lane.flush())
             self._show_pending(lane)
@@ -584,6 +596,64 @@ class VoiceSession:
         return True
 
     # ------------------------------------------------------------------- helpers
+
+    def _toggle_barge_in(self) -> None:
+        self._barge_in = not self._barge_in
+        self._out(
+            "  Interrupting is on: start talking while I speak and I'll stop. Use headphones, "
+            "or I will hear my own voice and cut myself off."
+            if self._barge_in
+            else "  Interrupting is off."
+        )
+
+    async def _say_reply(self, text: str) -> Transcript | None:
+        """Speak a reply; if interrupting is on and the user starts talking, stop and return what they said.
+
+        The microphone listens while the speaker plays. A burst of speech (longer than a cough) cuts the
+        voice off at once; the person is then heard out and transcribed like any other turn. Returns None
+        if the reply played to the end, or nothing usable was heard.
+        """
+        if not (self._barge_in and self._recorder.auto_stop):
+            await self._say(text)
+            return None
+        async with self._speak_lock:
+            speaker = self.engines.speaker
+            try:
+                self._recorder.start(barge_in=True)
+            except (TypeError, VoiceError) as exc:  # no mic, or a recorder without this mode: just speak
+                self._out(f"  {exc}")
+                with contextlib.suppress(VoiceError):
+                    await speaker.say(text)
+                return None
+            speak = asyncio.ensure_future(speaker.say(text))
+            cut = False
+            try:
+                while not speak.done():
+                    await asyncio.sleep(0.03)  # first let the voice start, then listen for the user
+                    if not speak.done() and self._recorder.speech_started:
+                        cut = True
+                        break
+                if cut:
+                    speak.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, VoiceError):
+                        await speak
+                    self._out("  (you cut in)")
+                    await asyncio.to_thread(self._recorder.wait_done)  # hear them out
+                else:
+                    await speak
+            except VoiceError as exc:
+                self._out(f"  {exc}")
+            except asyncio.CancelledError:
+                speak.cancel()
+                raise
+            finally:
+                if not cut:
+                    self._recorder.cancel()
+                wav = self._recorder.stop()
+            if not cut or not wav:
+                return None
+            self._save_audio(wav)
+            return await self.engines.transcriber.transcribe(wav)
 
     async def _say(self, text: str) -> None:
         async with self._speak_lock:

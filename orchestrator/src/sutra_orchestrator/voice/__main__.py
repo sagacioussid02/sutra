@@ -26,6 +26,8 @@ from ..lessons import build_lessons
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
 from .config import load_voice_config
+from .hints import build_hint, memory_names
+from .devices import output_is_headphones
 from .local_engines import FasterWhisperTranscriber, SaySpeaker
 from .loop import VoiceSession, VoiceSettings
 from .openai_engines import OpenAISpeaker, OpenAITranscriber
@@ -42,14 +44,7 @@ async def _run(verbose: bool) -> int:
         FasterWhisperTranscriber(vc.local_stt_model), SaySpeaker(vc.local_voice), "private: local speech, nothing leaves this machine for audio"
     )
     cloud: Engines | None = None
-    if vc.openai_api_key:
-        hint = f"Names you may hear: {vc.assistant_name}, Sutra, minions, finanxe, twin."
-        cloud = Engines(
-            OpenAITranscriber(vc.openai_api_key, vc.stt_model, prompt=hint, language=vc.language),
-            OpenAISpeaker(vc.openai_api_key, vc.tts_model, vc.tts_voice),
-            "cloud: OpenAI speech, audio and spoken replies go to OpenAI",
-        )
-    else:
+    if not vc.openai_api_key:
         print("OPENAI_API_KEY is not set, so voice starts in private (local) mode.")
 
     gateway = McpGatewaySession(
@@ -70,6 +65,20 @@ async def _run(verbose: bool) -> int:
                 record_replies=config.record_replies,
                 hot_days=config.episode_hot_days,
                 on_notice=lambda notice: print(f"  {notice}"),
+            )
+        if vc.openai_api_key:
+            # Names the user has told Sutra (a city, a person) go to the recognizer as a vocabulary hint, so
+            # "Orem" is not heard as "Zoram". Only these words are sent, and only in cloud mode.
+            remembered = (
+                memory_names(m.content for m in memory.list_memories() if m.status == "active")
+                if memory is not None
+                else []
+            )
+            hint = build_hint(vc.assistant_name, vc.stt_hints, remembered)
+            cloud = Engines(
+                OpenAITranscriber(vc.openai_api_key, vc.stt_model, prompt=hint, language=vc.language),
+                OpenAISpeaker(vc.openai_api_key, vc.tts_model, vc.tts_voice),
+                "cloud: OpenAI speech, audio and spoken replies go to OpenAI",
             )
         reminder_store: ReminderStore | None = None
         reminder_scheduler: ReminderScheduler | None = None
@@ -150,6 +159,7 @@ async def _run(verbose: bool) -> int:
             max_background=vc.max_background,
             wait_notice_delay=vc.wait_notice_delay,
             record_dir=Path(vc.record_dir).expanduser() if vc.record_dir else None,
+            barge_in=output_is_headphones() if vc.barge_in == "auto" else vc.barge_in == "on",
         )
         session = VoiceSession(
             orchestrator,

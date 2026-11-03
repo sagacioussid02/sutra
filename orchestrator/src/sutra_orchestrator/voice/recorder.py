@@ -45,6 +45,8 @@ class EndpointDetector:
 
     CALIBRATION_BLOCKS = 6
     SPEECH_BLOCKS = 3
+    # Interrupting while Sutra speaks needs more: a cough or a click must not cut it off.
+    BARGE_IN_SPEECH_BLOCKS = 8
     # A block this loud is speech even before the noise floor is learned, so talking
     # right away is not mistaken for background noise.
     OBVIOUS_SPEECH_RMS = 1500.0
@@ -56,7 +58,9 @@ class EndpointDetector:
         no_speech_ms: int = 6000,
         max_ms: int = 30_000,
         block_ms: int = BLOCK_MS,
+        speech_blocks: int = SPEECH_BLOCKS,
     ) -> None:
+        self._speech_blocks = speech_blocks
         self._silence = silence_ms
         self._no_speech = no_speech_ms
         self._max = max_ms
@@ -82,7 +86,7 @@ class EndpointDetector:
         loud = rms >= self._threshold
         if not self.speech_started:
             self._loud_run = self._loud_run + 1 if loud else 0
-            if self._loud_run >= self.SPEECH_BLOCKS:
+            if self._loud_run >= self._speech_blocks:
                 self.speech_started = True
                 self._quiet_ms = 0
             return self._elapsed >= self._no_speech
@@ -155,7 +159,15 @@ class MicRecorder:
         stream = self._open()
         stream.close()
 
-    def start(self) -> None:
+    @property
+    def speech_started(self) -> bool:
+        """True once the detector has heard the user begin to speak in the current recording."""
+        det = self._detector
+        return bool(det and det.speech_started)
+
+    def start(self, *, barge_in: bool = False) -> None:
+        """Start recording. ``barge_in`` is for listening while Sutra speaks: it needs a longer burst
+        of speech to count, and does not give up waiting for one."""
         if self._stream is None:
             self._stream = self._open()
             self._stream.start()
@@ -163,7 +175,11 @@ class MicRecorder:
         self._cancelled = False
         self.heard_speech = False
         self._detector = (
-            EndpointDetector(silence_ms=self._silence_ms, no_speech_ms=self._no_speech_ms)
+            EndpointDetector(
+                silence_ms=self._silence_ms,
+                no_speech_ms=10 * 60_000 if barge_in else self._no_speech_ms,
+                speech_blocks=EndpointDetector.BARGE_IN_SPEECH_BLOCKS if barge_in else EndpointDetector.SPEECH_BLOCKS,
+            )
             if self.auto_stop
             else None
         )

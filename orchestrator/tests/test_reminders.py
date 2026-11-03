@@ -421,3 +421,130 @@ def test_leading_phrases_and_questions():
     assert parse("for 5pm to call Sam").text == "call Sam"
     assert reminder_request("remind me what I said yesterday") is None
     assert reminder_request("remind me of my goals") is None
+
+
+# ------------------------------------------ real speech: fillers, spoken hours, "9 a.m."
+
+DEN_NOW = datetime(2026, 11, 3, 14, 0, tzinfo=DENVER)  # a Tuesday afternoon
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "So lets remind me in 2 minutes to stretch",
+        "Okay, so can you remind me in 2 minutes to stretch?",
+        "Hey Sutra, could you please remind me in 2 minutes to stretch",
+        "I want you to remind me in 2 minutes to stretch",
+        "um, remind me in 2 minutes to stretch",
+    ],
+)
+def test_ordinary_filler_before_remind_me_is_fine(said):
+    request = reminder_request(said)
+    assert request is not None and "in 2 minutes to stretch" in request
+    got = parse_request(request, DEN_NOW, DENVER)
+    assert got is not None and got.text == "stretch" and got.fire_at == DEN_NOW + timedelta(minutes=2)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "don't remind me about that",
+        "did you remind me yet",
+        "I told her to remind me later",
+        "why would you remind me of that",
+        "she might remind me in 2 minutes to stretch",
+        "one two three four five six seven eight nine remind me in 2 minutes to stretch",
+    ],
+)
+def test_anything_else_before_remind_me_is_not_a_request(said):
+    assert reminder_request(said) is None
+
+
+def test_spoken_hours_and_spaced_am_pm_and_dayparts_parse():
+    for said, hour, text_ in [
+        ("tomorrow at nine in the morning to call Sam", 9, "call Sam"),
+        ("tomorrow at 9 A.M. to call Sam", 9, "call Sam"),
+        ("tomorrow at 9 am to call Sam", 9, "call Sam"),
+        ("at 5 PM to stretch", 17, "stretch"),
+        ("at five o'clock this evening to stretch", 17, "stretch"),
+        ("at 9 at night to lock up", 21, "lock up"),
+    ]:
+        got = parse_request(said, DEN_NOW, DENVER)
+        assert got is not None, said
+        assert (got.fire_at.hour, got.text) == (hour, text_), said
+
+
+def test_bare_hours_are_still_not_guessed_by_the_strict_parser():
+    assert parse_request("tomorrow at 9 to call Sam", DEN_NOW, DENVER) is None
+    assert parse_request("at 5 to do stuff", DEN_NOW, DENVER) is None
+
+
+def test_bare_hour_with_no_day_picks_the_next_one_coming_in_waking_hours():
+    from sutra_orchestrator.reminders.parser import resolve_bare_hour
+
+    pick = lambda r: resolve_bare_hour(r, DEN_NOW, DENVER).chosen.fire_at.strftime("%a %H:%M")
+    assert pick("at 8 to take my pills") == "Tue 20:00"  # 8 PM tonight, not 8 AM tomorrow
+    assert pick("at one o'clock to eat") == "Wed 13:00"  # never 1 in the morning
+    assert pick("at 3 to call Sam") == "Tue 15:00"
+    # A day named means two real readings: the caller must ask.
+    both = resolve_bare_hour("tomorrow at nine to call Sam", DEN_NOW, DENVER)
+    assert both.chosen is None and both.am.fire_at.hour == 9 and both.pm.fire_at.hour == 21
+    assert resolve_bare_hour("sometime to do the thing", DEN_NOW, DENVER) is None
+
+
+async def test_the_dentist_example_asks_morning_or_evening_then_saves_the_answer(tmp_path):
+    store = make_store(tmp_path)
+    service = ReminderService(store, DENVER)
+    model = FakeModel(script=[])  # no model call anywhere in this flow
+    clock = Clock(DEN_NOW)
+    orch, _ = await make_orchestrator(model, reminders=service, clock=clock)
+
+    ask = await orch.respond("Okay, so can you remind me tomorrow at nine to call the dentist?")
+    assert "Do you mean tomorrow at 9:00 AM or tomorrow at 9:00 PM" in ask and "morning or evening" in ask
+    assert store.list_pending() == []  # nothing set until they answer
+
+    done = await orch.respond("the morning")
+    assert "call the dentist" in done and "tomorrow at 9:00 AM" in done
+    [row] = store.list_pending()
+    assert row.text == "call the dentist" and row.fire_at.astimezone(DENVER).hour == 9
+    assert model.calls == []
+    store.close()
+
+
+async def test_an_answer_that_is_not_an_answer_closes_the_question_without_a_reminder(tmp_path):
+    store = make_store(tmp_path)
+    service = ReminderService(store, DENVER)
+    model = FakeModel(script=[resp(text("It is two in the afternoon."))])
+    orch, _ = await make_orchestrator(model, reminders=service, clock=Clock(DEN_NOW))
+    await orch.respond("remind me tomorrow at nine to call the dentist")
+    reply = await orch.respond("what time is it")  # carries on as an ordinary turn
+    assert reply == "It is two in the afternoon."
+    assert store.list_pending() == []
+    # The question is gone: a later "morning" is not read as an answer.
+    assert service.try_handle("morning", DEN_NOW) is None
+    store.close()
+
+
+async def test_a_stale_question_is_not_answered_by_a_much_later_word(tmp_path):
+    store = make_store(tmp_path)
+    service = ReminderService(store, DENVER)
+    service.try_handle("remind me tomorrow at nine to call the dentist", DEN_NOW)
+    assert service.try_handle("morning", DEN_NOW + timedelta(minutes=10)) is None
+    assert store.list_pending() == []
+    store.close()
+
+
+async def test_a_bare_hour_today_is_set_to_the_next_one_and_says_so(tmp_path):
+    store = make_store(tmp_path)
+    service = ReminderService(store, DENVER)
+    reply = service.try_handle("remind me at 8 to take my pills", DEN_NOW)
+    assert "take my pills" in reply and "today at 8:00 PM" in reply  # the exact time is spoken back
+    store.close()
+
+
+def test_the_model_is_told_not_to_send_reminders_to_the_money_calendar():
+    from sutra_orchestrator.prompts import load_prompt
+
+    prompt = load_prompt("system.md")
+    assert "Never say you cannot set reminders" in prompt and "money calendar" in prompt
+    assert "Say what you heard and ask them to repeat" in prompt  # the "Zoram" rule

@@ -24,7 +24,11 @@ class SaySpeaker:
             proc = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.PIPE)
         except FileNotFoundError:
             raise VoiceError("the say command was not found; local speech needs macOS") from None
-        await proc.communicate(text.encode("utf-8"))
+        try:
+            await proc.communicate(text.encode("utf-8"))
+        except asyncio.CancelledError:
+            proc.terminate()  # interrupted: stop talking now
+            raise
 
 
 def _wav_to_float32(wav: bytes):
