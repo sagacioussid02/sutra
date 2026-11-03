@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from collections import deque
@@ -18,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..classifier import AFFIRM, DENY
+from ..hangout import HangoutReply
 from ..i18n import detect, heard as heard_line, localize
 from ..orchestrator import Orchestrator
 from .types import Engines, Recorder, Transcript, VoiceError
@@ -52,6 +54,13 @@ class VoiceSettings:
     record_dir: Path | None = None
     stream: bool = False  # speak the reply sentence by sentence while the model writes it
     barge_in: bool = False  # speak-over: stop talking when the user starts (headphones only)
+
+
+def _takes_voice(speaker) -> bool:
+    try:
+        return "voice" in inspect.signature(speaker.say).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 class Streamed(str):
@@ -421,7 +430,9 @@ class VoiceSession:
             think = time.perf_counter() - asked_at
             self._out(f"sutra> {reply}")
             spoken_over = None
-            if isinstance(reply, Streamed):
+            if isinstance(reply, HangoutReply):
+                spoken_over = await self._say_group(reply)
+            elif isinstance(reply, Streamed):
                 if not reply.cut:
                     rest = reply.remainder()
                     if rest:
@@ -444,6 +455,16 @@ class VoiceSession:
             if not await self._maybe_timely():
                 await self._maybe_interest_offer()
         return True, interrupted
+
+    async def _say_group(self, reply: HangoutReply) -> Transcript | None:
+        """Speak each friend's line in their own voice (or with their name, if the voice cannot change)."""
+        capable = _takes_voice(self.engines.speaker)
+        for line in reply.lines:
+            voice = reply.voices.get(line.speaker) if capable else None
+            heard = await self._say_reply(line.text if voice else f"{line.speaker} says: {line.text}", voice)
+            if self._last_cut:
+                return heard
+        return None
 
     def _show_pending(self, lane: Orchestrator) -> None:
         pending = lane.pending
@@ -725,7 +746,7 @@ class VoiceSession:
             else "  Interrupting is off."
         )
 
-    async def _say_reply(self, text: str) -> Transcript | None:
+    async def _say_reply(self, text: str, voice: str | None = None) -> Transcript | None:
         """Speak a reply; if interrupting is on and the user starts talking, stop and return what they said.
 
         The microphone listens while the speaker plays. A burst of speech (longer than a cough) cuts the
@@ -734,7 +755,7 @@ class VoiceSession:
         """
         self._last_cut = False
         if not (self._barge_in and self._recorder.auto_stop):
-            await self._say(text)
+            await self._say(text, voice)
             return None
         async with self._speak_lock:
             speaker = self.engines.speaker
@@ -743,9 +764,11 @@ class VoiceSession:
             except (TypeError, VoiceError) as exc:  # no mic, or a recorder without this mode: just speak
                 self._out(f"  {exc}")
                 with contextlib.suppress(VoiceError):
-                    await speaker.say(text)
+                    await (speaker.say(text, voice=voice) if voice and _takes_voice(speaker) else speaker.say(text))
                 return None
-            speak = asyncio.ensure_future(speaker.say(text))
+            speak = asyncio.ensure_future(
+                speaker.say(text, voice=voice) if voice and _takes_voice(speaker) else speaker.say(text)
+            )
             cut = False
             try:
                 while not speak.done():
@@ -776,10 +799,11 @@ class VoiceSession:
             self._save_audio(wav)
             return await self.engines.transcriber.transcribe(wav)
 
-    async def _say(self, text: str) -> None:
+    async def _say(self, text: str, voice: str | None = None) -> None:
         async with self._speak_lock:
             try:
-                await self.engines.speaker.say(text)
+                speaker = self.engines.speaker
+                await (speaker.say(text, voice=voice) if voice and _takes_voice(speaker) else speaker.say(text))
             except VoiceError as exc:
                 self._out(f"  {exc}")
 

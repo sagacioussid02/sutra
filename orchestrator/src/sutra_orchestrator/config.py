@@ -49,6 +49,8 @@ class Config:
     offers_daily_max: int = 4
     offers_calls_per_day: int = 200
     offers_urgent_sources: tuple[str, ...] = ()
+    gossip_url: str = ""
+    hangout_voices: str = ""
     feeds_enabled: bool = True
     home_area: str = ""
     news_enabled: bool = False
@@ -164,6 +166,8 @@ def load_config(
         offers_urgent_sources=tuple(
             t.strip() for t in (merged.get("SUTRA_OFFERS_URGENT_SOURCES") or "").split(",") if t.strip()
         ),
+        gossip_url=_gossip_url(merged),
+        hangout_voices=merged.get("SUTRA_HANGOUT_VOICES", ""),
         feeds_enabled=_bool(merged, "SUTRA_FEEDS", True),
         home_area=" ".join((merged.get("SUTRA_HOME_AREA") or "").split()),
         news_enabled=_bool(merged, "SUTRA_NEWS", False),
@@ -200,6 +204,18 @@ def load_config(
         or "data",
         reminders_tz=_timezone(merged),
     )
+
+
+def _gossip_url(env: Mapping[str, str]) -> str:
+    raw = (env.get("SUTRA_GOSSIP_URL") or "").strip()
+    if not raw:
+        return ""
+    from .hangout import check_url
+
+    try:
+        return check_url(raw)
+    except ValueError as exc:
+        raise ConfigError(f"SUTRA_GOSSIP_URL {exc}, got {raw!r}") from None
 
 
 def _units(env: Mapping[str, str]) -> str:

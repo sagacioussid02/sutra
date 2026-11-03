@@ -538,3 +538,22 @@ Not translated: the longer system messages (they are written by the model in you
 | `SUTRA_LOCAL_VOICE_HI` | `Lekha` | macOS voice used for Devanagari text in private mode |
 | `SUTRA_LOCAL_STT_LANGUAGE` | automatic | language for local speech recognition (use a multilingual model) |
 | `SUTRA_LANGUAGE` | automatic | language hint for cloud recognition; leave empty to switch freely |
+
+## The group chat (gossip hangout)
+
+If you run your separate gossip app (the private friend group with Priya, Rahul and Ananya), Sutra can be a way into it by voice. Set `SUTRA_GOSSIP_URL=http://127.0.0.1:8765` (a local address only; off by default) and say **"let's catch up with the group"**. Say **"leave the group"** to come back.
+
+- **It says what it is.** On entering: the group are fictional friends in a separate app, what you say goes to that app, and its info bot may look up public facts online.
+- **You speak for yourself.** Every message goes to the group exactly as you said it. Sutra composes nothing for the group, and the model has no tool that reaches it, so nothing is passed on by Sutra's own initiative.
+- **Some things stay out.** A message about money, illness, loss, or family or legal trouble is not sent ("I'll keep that out of the group"). If you sound distressed, the mode ends and Sutra listens as usual.
+- **Each friend has a voice.** Replies come back labelled (`Priya: ...`) and are spoken in their own voices (Priya nova, Rahul onyx, Ananya sage, the info bot echo; change them with `SUTRA_HANGOUT_VOICES="Priya=shimmer,Rahul=ash"`). The private macOS voice says "Priya says: ..." instead. Speaking over them works line by line.
+- **Kept apart from Sutra.** Nothing said in the group goes into the conversation history, memory, the conversation graph, people and plans, or any later prompt, and there are no jokes or unprompted offers during it. After you leave, Sutra has no record of what Priya said.
+
+Text-client commands: `/hangout` (is the app answering?), `/hangout reset` (start the group's world afresh).
+
+The connection is a small client for the app's REST API, behind an interface, so it can later become gateway tools if you want it routed through the gateway's approval flow.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_GOSSIP_URL` | none | the gossip app's local address; off when empty |
+| `SUTRA_HANGOUT_VOICES` | built-in | per-friend voices, `Name=voice` pairs |

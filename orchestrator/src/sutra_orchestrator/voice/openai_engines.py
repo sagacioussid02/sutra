@@ -106,10 +106,12 @@ class OpenAISpeaker:
         self._play = play or play_pcm_stream
         self._cache: dict[str, bytes] = {}
 
-    async def say(self, text: str) -> None:
+    async def say(self, text: str, voice: str | None = None) -> None:
         if not text.strip():
             return
-        cached = self._cache.get(text)
+        voice = voice or self._voice
+        key = text if voice == self._voice else f"{voice}\x00{text}"
+        cached = self._cache.get(key)
         if cached is not None:
             await self._play(_chunks(cached))
             return
@@ -118,7 +120,7 @@ class OpenAISpeaker:
         try:
             async with self._client.audio.speech.with_streaming_response.create(
                 model=self._model,
-                voice=self._voice,
+                voice=voice,
                 input=text,
                 instructions=self._instructions,
                 response_format="pcm",
@@ -129,7 +131,7 @@ class OpenAISpeaker:
         except Exception as exc:
             raise VoiceError(_failure("text-to-speech", exc)) from None
         if keep and heard:
-            self._cache[text] = b"".join(heard)  # only a phrase that played to the end is kept
+            self._cache[key] = b"".join(heard)  # only a phrase that played to the end is kept
 
     async def prewarm(self, phrases: Any) -> None:
         """Synthesize short phrases ahead of time so the first use is instant. Never raises."""

@@ -26,6 +26,7 @@ from ..lessons import build_lessons
 from ..personality import PersonalityService, PersonalityStore
 from ..life import LifeService, LifeStore
 from ..feeds import build_feeds
+from ..hangout import HangoutService, HttpGroupClient, parse_voices
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
 from .config import load_voice_config
@@ -147,6 +148,11 @@ async def _run(verbose: bool) -> int:
             if graph is not None:
                 graph.add_listener(life.on_episode)
         feeds = build_feeds(config, offers, interests, reminder_store, life)
+        hangout = (
+            HangoutService(HttpGroupClient(config.gossip_url), parse_voices(config.hangout_voices))
+            if config.gossip_url
+            else None
+        )
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -171,6 +177,7 @@ async def _run(verbose: bool) -> int:
             personality=personality,
             life=life,
             feeds=feeds,
+            hangout=hangout,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
