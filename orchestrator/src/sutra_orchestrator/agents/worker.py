@@ -22,6 +22,19 @@ WORKER_SYSTEM = """You are a research assistant working on one task. Use web sea
 MAX_SOURCES = 10
 
 
+def _tighter(base: Budget, other: Budget) -> Budget:
+    """The smaller of each limit: a caller can narrow a run but never widen it."""
+    return Budget(
+        max_searches=min(base.max_searches, other.max_searches),
+        max_tool_calls=min(base.max_tool_calls, other.max_tool_calls),
+        max_turns=min(base.max_turns, other.max_turns),
+        run_tokens=min(base.run_tokens, other.run_tokens),
+        timeout_s=min(base.timeout_s, other.timeout_s),
+        daily_runs=base.daily_runs,
+        daily_tokens=base.daily_tokens,
+    )
+
+
 def _text_of(blocks: list[dict[str, Any]]) -> str:
     return "".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
 
@@ -46,18 +59,21 @@ class ResearchWorker:
         self._sandbox = sandbox
         self._budget = budget
 
-    async def run(self, task: str) -> Findings:
-        """Research ``task``. Always returns findings; a limit gives a partial result."""
+    async def run(self, task: str, budget: Budget | None = None) -> Findings:
+        """Research ``task``. Always returns findings; a limit gives a partial result.
+
+        ``budget`` may only be used to run with smaller limits than the worker's own.
+        """
         state = Findings()
+        b = self._budget if budget is None else _tighter(self._budget, budget)
         try:
-            await asyncio.wait_for(self._loop(task, state), timeout=self._budget.timeout_s)
+            await asyncio.wait_for(self._loop(task, state, b), timeout=b.timeout_s)
         except asyncio.TimeoutError:
             state.partial, state.reason = True, state.reason or "time"
         state.sources = _dedupe(state.sources)[:MAX_SOURCES]
         return state
 
-    async def _loop(self, task: str, state: Findings) -> None:
-        b = self._budget
+    async def _loop(self, task: str, state: Findings, b: Budget) -> None:
         system = WORKER_SYSTEM.format(searches=b.max_searches)
         messages: list[dict[str, Any]] = [{"role": "user", "content": [{"type": "text", "text": task}]}]
         tool_defs = self._sandbox.tool_defs()

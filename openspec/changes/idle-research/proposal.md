@@ -1,21 +1,29 @@
 ## Why
 
-The natural companion to an interest profile: when the user is not talking to it, Sutra could spend a small, bounded amount of effort looking into the top current interest — what's on, what changed, what's worth knowing — and have something genuinely useful ready, delivered through the inbox and announced ask-first, instead of the user having to remember to ask. This is the behaviour that makes an always-on assistant feel proactive rather than idle.
+Sutra knows what the user is into (approved interests) and what they have been planning (the episode graph), and it can run bounded, sandboxed research and decide when something is worth saying. Nothing connects them: if the user wants to know what's on this Diwali, they have to ask. When the user is away, a small, strictly budgeted piece of research on something they care about can leave something genuinely useful ready, which Sutra then offers in a conversational way and only when the offer system judges it worth the interruption.
 
-**Status: stub — not implemented. This change is gated on the reminders + direct-answers changes (A+B) being dogfooded first, and on Sidd's explicit go-ahead.**
+## What Changes
 
-## What Changes (planned)
+- **An idle researcher.** A background task that, when the user has been quiet for a while and nothing is running or awaiting confirmation, picks at most one topic to look into, runs one ephemeral research run on it, and files the result as a *signal* for the offers system. It is **off by default** and turned on by the user.
+- **A picker, not a script.** A small tools-off model call sees only the user's approved interests and the topics of recent plans from the graph (never their gists), today's date, and what was researched before, and returns a topic, a self-contained brief and a value score, or nothing. Code checks the brief for anything personal. The score has to clear a learned bar that moves with how the user reacts to findings.
+- **Findings are untrusted data.** The result is summarised by a tools-off call into a few sentences, dated "as of", and carried as a signal that expires in a few days. It is never written to memory, and it is never spoken verbatim without the user saying yes.
+- **Delivered by the existing offers system.** The signal is judged like any other (benefit against the bar, connection to the graph, one at a time, daily rails) and is always put as a teaser question. Yes gives the summary; "not now" holds it; "no" closes it and teaches the bar.
+- **Hard rails.** Idle runs have their own small daily cap and a minimum gap between runs, always leave room for the user's own requests, stop cold when spent, and never run while the user is talking. Failures back off.
+- **Control.** `/idle` shows status, today's use and what was researched; `/idle on|off|now|forget`; "stop telling me about X" already blocks a topic for research too.
 
-- A scheduler-driven job (on the reminders change's scheduler) that, when enabled, picks the strongest current interest from the interest profile and runs one bounded research task — through the ephemeral-agents change's sandboxed delegation, never as the main agent — and files the result in the inbox as an unread item.
-- Hard limits, enforced in code and off by default: a daily budget (runs and tokens) that stops the job cold when spent, a minimum interval between runs, and a single settings switch that disables idle research entirely. Research runs only while enabled and never spends past the cap "to finish a thought".
-- Everything produced is a *finding*, labelled with when it was gathered and from what; findings are data for the main conversation, not memories, until the user engages with one.
+Out of scope: producing weather or calendar signals (their own producers later), research on anything that is not an approved interest or a recent plan, and any action taken on findings.
 
 ## Capabilities
 
 ### New Capabilities
+- `idle-research`: budgeted background research over approved interests and recent plans, delivered as judged, asked-first offers.
 
-- `idle-research`: budgeted background research over the interest profile, delivered as inbox findings. (Stub — no spec yet; the spec is written when this change is picked up.)
+### Modified Capabilities
+(none)
 
 ## Impact
 
-None yet — stub only. When picked up: depends on `interest-profile` (what to research), `ephemeral-agents` (the sandboxed worker), and `reminders-scheduler` (the scheduler and inbox). Expected to add web access for the research worker, which needs its own review at that time: web content is untrusted input and this job reads it unsupervised.
+- New package `orchestrator/src/sutra_orchestrator/idle/` and a small local `idle.db` (owner-only, gitignored).
+- `OffersService` gains one rule (a `research` signal is always an ask) and a hook that lets the researcher's own bar learn from the outcome of its findings. `Orchestrator` gains a last-activity time. No schema changes to existing databases.
+- Web access happens only through the existing research worker and its limits; the topic brief is the only thing that leaves the machine.
+- Depends on `interest-profile`, `ephemeral-agents`, and `episode-graph-offers`.

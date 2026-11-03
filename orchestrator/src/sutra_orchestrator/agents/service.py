@@ -56,11 +56,15 @@ class AgentService:
             return DAILY_TOKENS_REPLY
         return None
 
-    async def run(self, task: str) -> Findings:
-        """Run one research task and record it. Cancellation is recorded as interrupted."""
-        run_id = self._store.start(task, self._now())
+    async def run(self, task: str, *, budget: Budget | None = None, tag: str = "") -> Findings:
+        """Run one research task and record it. Cancellation is recorded as interrupted.
+
+        ``tag`` marks who asked (shown in the run record, never sent to the model); ``budget``
+        can only narrow the run's limits.
+        """
+        run_id = self._store.start(f"{tag} {task}" if tag else task, self._now())
         try:
-            findings = await self._worker.run(task)
+            findings = await self._worker.run(task, budget)
         except asyncio.CancelledError:
             self._store.interrupt(run_id, self._now())
             raise

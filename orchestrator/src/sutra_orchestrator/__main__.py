@@ -20,6 +20,7 @@ from .agents import AgentCommands
 from .interests import InterestCommands, InterestService, InterestStore, Reflector
 from .graph import GraphCommands
 from .offers import OffersCommands, build_graph_and_offers
+from .idle import IdleCommands, build_idle
 from .agents.factory import build_agent_service
 from .reminders import ReminderScheduler, ReminderService, ReminderStore
 from .reminders.commands import ReminderCommands
@@ -104,10 +105,18 @@ async def _run(verbose: bool) -> int:
                 _memory_dir(config.agents_dir), ZoneInfo(config.reminders_tz),
             )
             agent_commands = AgentCommands(agents)
+        idle = build_idle(
+            config, model, _memory_dir(config.idle_dir),
+            interests=interests, graph=graph, agents=agents, offers=offers,
+            last_activity=lambda: orchestrator.last_activity,
+            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks),
+        )
+        idle_commands = IdleCommands(idle) if idle is not None else None
         # Reminder commands first: the memory handler answers every "/"
         # line (including "unknown command"), so it must be tried last.
         commands = CommandSet(
-            reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands, memory_commands
+            reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands,
+            idle_commands, memory_commands
         )
         orchestrator = Orchestrator(
             model=model,
@@ -167,6 +176,10 @@ async def _run(verbose: bool) -> int:
             interests.start_task()
         if offers is not None:
             offers.start_task()
+        if idle is not None:
+            idle.start_task()
+            if idle.enabled:
+                print("Idle research is on: I may look into your interests while you're away.")
         if reminder_scheduler is not None:
             reminder_scheduler.start_task()
             print("Reminders are on. Say 'remind me ...', or type /help.")
@@ -178,6 +191,8 @@ async def _run(verbose: bool) -> int:
             await orchestrator.cancel_research()
             if interests is not None:
                 await interests.stop()
+            if idle is not None:
+                await idle.stop_task()
             if offers is not None:
                 await offers.stop_task()
             await orchestrator.flush()
@@ -194,6 +209,8 @@ async def _run(verbose: bool) -> int:
                 graph.store.close()
             if offers is not None:
                 offers.store.close()
+            if idle is not None:
+                idle.store.close()
     finally:
         await gateway.close()
     return 0
