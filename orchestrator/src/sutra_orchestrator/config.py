@@ -49,6 +49,12 @@ class Config:
     offers_daily_max: int = 4
     offers_calls_per_day: int = 200
     offers_urgent_sources: tuple[str, ...] = ()
+    idle_enabled: bool = False
+    idle_dir: str = "data"
+    idle_daily_runs: int = 1
+    idle_min_hours: int = 48
+    idle_max_searches: int = 2
+    idle_run_tokens: int = 3000
     agents_enabled: bool = True
     agent_model: str = DEFAULT_CLASSIFIER_MODEL
     agent_tools: tuple[str, ...] = ()
@@ -146,6 +152,12 @@ def load_config(
         offers_urgent_sources=tuple(
             t.strip() for t in (merged.get("SUTRA_OFFERS_URGENT_SOURCES") or "").split(",") if t.strip()
         ),
+        idle_enabled=_bool(merged, "SUTRA_IDLE_RESEARCH", False),
+        idle_dir=merged.get("SUTRA_IDLE_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
+        idle_daily_runs=_int(merged, "SUTRA_IDLE_DAILY_RUNS", 1),
+        idle_min_hours=_int(merged, "SUTRA_IDLE_MIN_HOURS", 48),
+        idle_max_searches=_int(merged, "SUTRA_IDLE_MAX_SEARCHES", 2),
+        idle_run_tokens=_int(merged, "SUTRA_IDLE_RUN_TOKENS", 3000),
         agents_enabled=_bool(merged, "SUTRA_AGENTS", True),
         agent_model=merged.get("SUTRA_AGENT_MODEL") or DEFAULT_CLASSIFIER_MODEL,
         agent_tools=tuple(

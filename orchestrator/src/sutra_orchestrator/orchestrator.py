@@ -176,6 +176,7 @@ class Orchestrator:
         self._offers = offers
         self._open_offer: OpenOffer | None = None
         self._open_offer_at: datetime | None = None
+        self.last_activity: datetime = (now or (lambda: datetime.now(timezone.utc)))()
         self._can_start_research: Callable[[], bool] = lambda: True
         self._adopt_research: Callable[[str, str, "asyncio.Future[str]"], None] | None = None
         self._research_tasks: set[asyncio.Future[str]] = set()
@@ -353,6 +354,7 @@ class Orchestrator:
             log.debug("ignoring turn not addressed to the assistant")
             return ""
 
+        self.last_activity = self._now()
         turn = _Turn()
         extra_system = ""
         reply: str | None = None

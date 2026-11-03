@@ -193,6 +193,21 @@ STRUCTURED_TOOLS: dict[str, dict[str, Any]] = {
             "required": ["choice"],
         },
     },
+    "idle_pick": {
+        "name": "record_pick",
+        "description": "Choose one topic worth researching now, or 0 for none.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "choice": {"type": "integer"},
+                "brief": {"type": "string"},
+                "kind": {"type": "string", "enum": ["whats_new", "upcoming", "compare", "how_to"]},
+                "value": {"type": "number"},
+                "revisit_after_days": {"type": "number"},
+            },
+            "required": ["choice"],
+        },
+    },
     "judgement": {
         "name": "record_judgement",
         "description": "Decide whether to speak up now, and how.",

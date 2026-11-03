@@ -172,6 +172,15 @@ class VoiceSession:
         await self._say(reply)
         return True
 
+    def busy(self) -> bool:
+        """True while a background job runs or a question to the user is still open."""
+        return (
+            any(not j.task.done() for j in self._jobs)
+            or self._offer is not None
+            or self._i_offer is not None
+            or self._fg.open_offer is not None
+        )
+
     def can_start_job(self) -> bool:
         return len(self._jobs) < self._s.max_background
 

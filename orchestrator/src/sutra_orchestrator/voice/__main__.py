@@ -21,6 +21,7 @@ from ..prompts import load_prompt
 from ..agents.factory import build_agent_service
 from ..interests import InterestService, InterestStore, Reflector
 from ..offers import build_graph_and_offers
+from ..idle import build_idle
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
 from .config import load_voice_config
@@ -106,6 +107,16 @@ async def _run(verbose: bool) -> int:
                 config, model, gateway, lambda: orchestrator.gateway_tools,
                 _memory_dir(config.agents_dir), ZoneInfo(config.reminders_tz),
             )
+        idle = build_idle(
+            config, model, _memory_dir(config.idle_dir),
+            interests=interests, graph=graph, agents=agents, offers=offers,
+            last_activity=lambda: orchestrator.last_activity,
+            busy=lambda: (
+                orchestrator.pending is not None
+                or bool(orchestrator.research_tasks)
+                or session.busy()
+            ),
+        )
         orchestrator = Orchestrator(
             model=model,
             gateway=gateway,
@@ -149,6 +160,8 @@ async def _run(verbose: bool) -> int:
         if offers is not None:
             session.attach_offers(offers)
             offers.start_task()
+        if idle is not None:
+            idle.start_task()
         if agents is not None:
             orchestrator.set_research_hooks(session.can_start_job, session.adopt_research)
         if reminder_scheduler is not None and reminder_store is not None:
@@ -166,6 +179,8 @@ async def _run(verbose: bool) -> int:
             await orchestrator.cancel_research()
             if interests is not None:
                 await interests.stop()
+            if idle is not None:
+                await idle.stop_task()
             if offers is not None:
                 await offers.stop_task()
             await orchestrator.flush()
@@ -182,6 +197,8 @@ async def _run(verbose: bool) -> int:
                 graph.store.close()
             if offers is not None:
                 offers.store.close()
+            if idle is not None:
+                idle.store.close()
     finally:
         await gateway.close()
     return 0

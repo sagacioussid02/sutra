@@ -393,3 +393,25 @@ Text-client commands: `/graph` (list), `/graph <id>` (links and reasons), `/grap
 | `SUTRA_OFFERS_CALLS` | 200 | rail on this feature's own small-model calls per day |
 | `SUTRA_OFFERS_URGENT_SOURCES` | none | comma-separated producers allowed to mark a short-fuse signal urgent |
 | `SUTRA_GRAPH_DIR`, `SUTRA_OFFERS_DIR` | the memory directory | where `graph.db` and `offers.db` live |
+
+## Idle research
+
+When you're away, Sutra can look into something you care about and tell you about it afterwards. It is **off until you turn it on** (`/idle on`, or `SUTRA_IDLE_RESEARCH=on`), because it uses web search without being asked.
+
+- **What it looks into.** Only your approved interests and the topics of your recent plans (the conversation graph's `planned` and `decided` episodes). A small model picks at most one topic that a search could improve (events coming up, new releases) and returns nothing most of the time. It never sees what you said, only the topic labels.
+- **What leaves the machine.** One self-contained sentence about the topic, checked in code: no email, phone number, long number, money amount, web address or blocked topic.
+- **When.** After you've been quiet for 30 minutes with nothing running or waiting for your answer; at most one run a day and 48 hours apart (the gap doubles after a failure); a smaller budget than a run you ask for (2 searches, about 3,000 tokens, 90 seconds); and it always leaves room for your own research requests.
+- **What happens to the result.** The findings are untrusted web text. A tools-off call turns them into a few sentences dated "as of ...", the full text is kept only for `/idle show`, and nothing goes into memory. The summary is offered through the offers system as a teaser that names only the topic ("Something interesting turned up about local festivals, want to hear it?"); you hear it only if you say yes. A finding expires after three days. If you accept, the research bar goes down; if you decline or ignore, it goes up.
+
+Text-client commands: `/idle` (status), `/idle on|off`, `/idle now` (try one run now, ignoring quiet time but not budgets or blocks), `/idle show <id>`, `/idle forget`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_IDLE_RESEARCH` | off | starting default; `/idle on` and `/idle off` override it |
+| `SUTRA_IDLE_DAILY_RUNS` | 1 | idle runs per day |
+| `SUTRA_IDLE_MIN_HOURS` | 48 | minimum gap between runs |
+| `SUTRA_IDLE_MAX_SEARCHES` | 2 | searches per idle run |
+| `SUTRA_IDLE_RUN_TOKENS` | 3000 | output tokens per idle run |
+| `SUTRA_IDLE_DIR` | the memory directory | where `idle.db` lives |
+
+It needs interests, research agents and offers to be on.
