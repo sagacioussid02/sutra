@@ -93,6 +93,8 @@ class Orchestrator:
         max_tool_calls: int = 6,
         history_turns: int = 20,
         reask_limit: int = 2,
+        persona: str = "",
+        spoken_reasks: bool = False,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._model = model
@@ -104,6 +106,9 @@ class Orchestrator:
         self._reask_limit = reask_limit
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._system = load_prompt("system.md")
+        if persona:
+            self._system = f"{self._system}\n{persona}"
+        self._spoken_reasks = spoken_reasks
         self._gateway_tools: dict[str, ToolDef] = {}
         self._history: list[list[dict[str, Any]]] = []
         self._pending: PendingAction | None = None
@@ -128,6 +133,46 @@ class Orchestrator:
     @property
     def pending(self) -> PendingAction | None:
         return self._pending
+
+    def fork(self) -> "Orchestrator":
+        """A new conversation lane over the same gateway, model and memory.
+
+        It starts from a copy of this lane's finished history and has its own held
+        action, so two lanes can run at once without interleaving each other's tool calls.
+        """
+        child = Orchestrator(
+            model=self._model,
+            gateway=self._gateway,
+            classifier=self._classifier,
+            memory=self._memory,
+            max_tool_calls=self._max_tool_calls,
+            history_turns=self._history_turns,
+            reask_limit=self._reask_limit,
+            spoken_reasks=self._spoken_reasks,
+            now=self._now,
+        )
+        child._system = self._system
+        child._gateway_tools = self._gateway_tools
+        child._history = [list(turn) for turn in self._history]
+        return child
+
+    async def classify_reply(self, description: str, text: str) -> str:
+        """Classify a reply to a yes/no question as affirm, deny, modify, or unclear."""
+        return await self._classifier.classify(description, text)
+
+    def note_background_result(self, request: str, reply: str) -> None:
+        """Record that an earlier request was answered in the background."""
+        self._history.append(
+            [
+                _text_msg("user", f"[Earlier request, answered later in the background] {request}"),
+                _text_msg("assistant", reply),
+            ]
+        )
+        self._history = self._history[-self._history_turns :]
+
+    def cancel_pending(self) -> None:
+        """Drop the held action without running it (used by callers that give up re-asking)."""
+        self._pending = None
 
     @property
     def memory(self) -> MemoryProvider:
@@ -188,10 +233,13 @@ class Orchestrator:
         pending.reasks += 1
         if pending.reasks > self._reask_limit:
             return self._finish_fixed(text, GAVE_UP_REPLY, turn, "dropped"), ""
-        reply = (
-            f"Sorry, I wasn't sure what you meant. {pending.description} "
-            "Should I go ahead? Please say yes or no."
-        )
+        if self._spoken_reasks:
+            reply = "Sorry, I didn't quite get that. Was that a yes or a no?"
+        else:
+            reply = (
+                f"Sorry, I wasn't sure what you meant. {pending.description} "
+                "Should I go ahead? Please say yes or no."
+            )
         self._history.append([_text_msg("user", text), _text_msg("assistant", reply)])
         return reply, ""
 

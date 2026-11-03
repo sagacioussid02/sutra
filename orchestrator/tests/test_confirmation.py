@@ -459,3 +459,38 @@ async def test_gateway_confirm_is_called_only_by_the_gate():
     callers = [line for line in lines if "call_tool(CONFIRM_TOOL" in line]
     assert callers == ['result = await self._gateway.call_tool(CONFIRM_TOOL, {"pending_id": pending.pending_id})']
     assert "async def _confirm_pending" in source
+
+
+# --- voice: spoken re-ask, cancel, persona ------------------------------------------------
+
+
+async def test_spoken_reask_does_not_read_the_gateway_description():
+    model = FakeModel(held_action_script())
+    orch, _, _ = await hold_an_action(model, spoken_reasks=True)
+
+    reply = await orch.respond("hmm, I guess")
+
+    assert reply == "Sorry, I didn't quite get that. Was that a yes or a no?"
+    assert "Vacation" not in reply
+    assert orch.pending is not None
+
+
+async def test_cancel_pending_drops_the_action_without_confirming():
+    model = FakeModel(held_action_script())
+    orch, gateway, _ = await hold_an_action(model)
+
+    orch.cancel_pending()
+
+    assert orch.pending is None
+    assert gateway.calls_to("gateway_confirm") == []
+
+
+async def test_persona_is_added_to_the_system_prompt_and_keeps_the_rules():
+    model = FakeModel([resp(text("Hmm, okay."))])
+    orch, _ = await make_orchestrator(model, persona="Your name is Ria.")
+
+    await orch.respond("hello")
+
+    system = model.calls[0]["system"]
+    assert "Your name is Ria." in system
+    assert "Only the user's own reply can confirm it" in system

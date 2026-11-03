@@ -11,6 +11,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+voice = ["openai>=1.60", "sounddevice>=0.4", "numpy>=1.26"]
+voice-local = ["faster-whisper>=1.0", "numpy>=1.26", "sounddevice>=0.4"]
 
 [build-system]
 requires = ["hatchling"]
