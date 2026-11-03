@@ -25,6 +25,7 @@ from .lessons import LessonCommands, build_lessons
 from .personality import HumorCommands, PersonalityService, PersonalityStore
 from .life import LifeCommands, LifeService, LifeStore
 from .feeds import FeedCommands, build_feeds
+from .hangout import HangoutCommands, HangoutService, HttpGroupClient, parse_voices
 from .agents.factory import build_agent_service
 from .reminders import ReminderScheduler, ReminderService, ReminderStore
 from .reminders.commands import ReminderCommands
@@ -132,6 +133,12 @@ async def _run(verbose: bool) -> int:
         life_commands = LifeCommands(life) if life is not None else None
         feeds = build_feeds(config, offers, interests, reminder_store, life)
         feed_commands = FeedCommands(feeds) if feeds is not None else None
+        hangout = (
+            HangoutService(HttpGroupClient(config.gossip_url), parse_voices(config.hangout_voices))
+            if config.gossip_url
+            else None
+        )
+        hangout_commands = HangoutCommands(hangout, config.gossip_url) if hangout is not None else None
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -144,7 +151,7 @@ async def _run(verbose: bool) -> int:
         commands = CommandSet(
             reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands,
             idle_commands, lesson_commands, humor_commands, life_commands,
-            feed_commands, memory_commands
+            feed_commands, hangout_commands, memory_commands
         )
         orchestrator = Orchestrator(
             model=model,
@@ -160,6 +167,7 @@ async def _run(verbose: bool) -> int:
             personality=personality,
             life=life,
             feeds=feeds,
+            hangout=hangout,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,

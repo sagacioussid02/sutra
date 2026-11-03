@@ -1,0 +1,158 @@
+"""A hangout with the user's fictional friend group, kept clearly apart from the assistant.
+
+The user speaks for themselves: their own words go to the group untouched, and the group's lines come back
+labelled with who said them. Nothing here is composed, summarized or stored by Sutra.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from typing import Protocol
+
+log = logging.getLogger("sutra_orchestrator")
+
+LOOPBACK = {"127.0.0.1", "localhost", "::1", "[::1]"}
+MAX_LINES = 6
+LINE_CHARS = 400
+DEFAULT_VOICES = {"Priya": "nova", "Rahul": "onyx", "Ananya": "sage", "Info Agent": "echo"}
+
+_START = re.compile(
+    r"\b(?:catch up with the (?:group|gang|friends)|talk to the (?:group|gang)|hang ?out with (?:the (?:group|gang|friends)|priya|rahul|ananya)|"
+    r"(?:open|start|join|put me in) the group(?: chat)?|gossip time|hangout mode|let'?s (?:gossip|hang ?out)|"
+    r"(?:chat|talk) with (?:priya|rahul|ananya))\b", re.IGNORECASE)
+_STOP = re.compile(
+    r"\b(?:leave the (?:group|chat|hangout)|back to sutra|exit (?:the )?hangout|stop the group chat|bye everyone|"
+    r"that'?s enough gossip|end hangout|close the group(?: chat)?)\b", re.IGNORECASE)
+
+ENTRY = (
+    "Okay, you're in the group chat with Priya, Rahul and Ananya. They're fictional friends running in a separate app, "
+    "not real people. What you say goes to that app, and its info bot may look up public facts online. "
+    "Say leave the group when you want me back."
+)
+LEFT = "Okay, you've left the group. I'm back."
+UNREACHABLE = "I can't reach the group right now. Is the gossip app running?"
+WITHHELD = "I'll keep that out of the group. Tell me that one instead, or leave the group first."
+
+
+def is_start(text: str) -> bool:
+    return bool(_START.search(text)) and not _STOP.search(text)
+
+
+def is_stop(text: str) -> bool:
+    return bool(_STOP.search(text))
+
+
+@dataclass(frozen=True)
+class Line:
+    speaker: str
+    text: str
+
+
+class HangoutReply(str):
+    """The group's reply: readable lines, with who said each, for a voice client to speak in turn."""
+
+    lines: list[Line]
+    voices: dict[str, str]
+
+
+class GroupClient(Protocol):
+    async def ping(self) -> bool: ...
+    async def say(self, text: str) -> list[Line]: ...
+    async def reset(self) -> bool: ...
+
+
+def parse_voices(raw: str) -> dict[str, str]:
+    voices = dict(DEFAULT_VOICES)
+    for part in raw.split(","):
+        name, _, voice = part.partition("=")
+        if name.strip() and voice.strip():
+            voices[name.strip()] = voice.strip()
+    return voices
+
+
+def check_url(url: str) -> str:
+    """The base URL if it is a local address; the group app is private and never leaves this machine."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or (parsed.hostname or "") not in LOOPBACK:
+        raise ValueError("must be a local address such as http://127.0.0.1:8765")
+    return url.rstrip("/")
+
+
+class HttpGroupClient:
+    """Talks to the gossip app's REST API on a local address, with the standard library only."""
+
+    def __init__(self, base_url: str, timeout: float = 15.0) -> None:
+        self._base = check_url(base_url)
+        self._timeout = timeout
+
+    def _call(self, method: str, path: str, body: dict | None = None) -> dict:
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        request = urllib.request.Request(
+            self._base + path, data=data, method=method, headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(request, timeout=self._timeout) as response:  # noqa: S310 (loopback only)
+            return json.loads(response.read(2_000_000).decode("utf-8"))
+
+    async def ping(self) -> bool:
+        try:
+            await asyncio.to_thread(self._call, "GET", "/api/state")
+            return True
+        except Exception:
+            return False
+
+    async def say(self, text: str) -> list[Line]:
+        data = await asyncio.to_thread(self._call, "POST", "/api/message", {"text": text})
+        return lines_from(data)
+
+    async def reset(self) -> bool:
+        try:
+            await asyncio.to_thread(self._call, "POST", "/api/reset", {})
+            return True
+        except Exception:
+            return False
+
+
+def lines_from(data: object) -> list[Line]:
+    """The group's replies from the app's response: everyone but the user, cleaned and capped."""
+    events = data.get("events") if isinstance(data, dict) else None
+    out: list[Line] = []
+    for e in events if isinstance(events, list) else []:
+        if not isinstance(e, dict) or e.get("kind") == "user" or e.get("speaker") == "You":
+            continue
+        who = " ".join(str(e.get("speaker") or "").split())[:30]
+        said = " ".join(re.sub(r"[\x00-\x1f]", " ", str(e.get("text") or "")).split())[:LINE_CHARS]
+        if who and said:
+            out.append(Line(who, said))
+    return out[:MAX_LINES]
+
+
+class HangoutService:
+    def __init__(self, client: GroupClient, voices: dict[str, str] | None = None) -> None:
+        self._client = client
+        self._voices = voices or dict(DEFAULT_VOICES)
+
+    @property
+    def client(self) -> GroupClient:
+        return self._client
+
+    async def enter(self) -> bool:
+        return await self._client.ping()
+
+    async def send(self, text: str) -> str:
+        """Pass the user's own words to the group and return its labelled replies."""
+        try:
+            lines = await self._client.say(text)
+        except Exception as exc:
+            log.debug("group chat failed (%s)", type(exc).__name__)
+            return UNREACHABLE
+        if not lines:
+            return "Nobody in the group answered."
+        reply = HangoutReply("\n".join(f"{l.speaker}: {l.text}" for l in lines))
+        reply.lines, reply.voices = lines, self._voices
+        return reply

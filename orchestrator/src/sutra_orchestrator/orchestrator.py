@@ -40,10 +40,12 @@ from .graph import GraphService
 from .interests import InterestService
 from . import translate
 from .feeds import FeedService
+from .hangout import ENTRY, LEFT, UNREACHABLE, WITHHELD, HangoutService, is_start as hangout_start, is_stop as hangout_stop
 from .i18n import detect, localize, reask
 from .life import LifeService, LifeTurn, engaged, refuses
 from .offers import OffersService, OpenOffer, is_deferral
 from .personality import PersonalityService
+from .personality.rules import heavy, upset
 from .classifier import AFFIRM, DENY, MODIFY, IntentClassifier
 from .gateway import CONFIRM_TOOL, GatewaySession, PendingInfo, ToolDef, ToolResult
 from .memory import (
@@ -189,6 +191,7 @@ class Orchestrator:
         personality: PersonalityService | None = None,
         life: LifeService | None = None,
         feeds: FeedService | None = None,
+        hangout: HangoutService | None = None,
         max_tool_calls: int = 6,
         history_turns: int = 20,
         reask_limit: int = 2,
@@ -212,6 +215,8 @@ class Orchestrator:
         self._life_turn = LifeTurn()
         self._lang = "en"
         self._interpreting = False
+        self._hangout = hangout
+        self._hangout_on = False
         self._open_offer: OpenOffer | None = None
         self._open_offer_at: datetime | None = None
         self.last_activity: datetime = (now or (lambda: datetime.now(timezone.utc)))()
@@ -263,6 +268,7 @@ class Orchestrator:
         self._pending = None
         self._history = []
         self._interpreting = False
+        self._hangout_on = False
         offer, self._open_offer = self._open_offer, None
         if offer is not None and self._offers is not None:
             self._offers.resolve(offer, "ignored")  # asked, and the user left without answering
@@ -430,6 +436,10 @@ class Orchestrator:
             reply, extra_system = await self._handle_pending(text, turn)
         if reply is None:
             reply = self._interpreter_switch(text)
+        hangout_turn = False
+        if reply is None and self._hangout is not None:
+            reply = await self._hangout_turn(text)
+            hangout_turn = reply is not None
         if reply is None and not self._interpreting:
             # "Remind me ..." is handled deterministically before any model
             # call: the time is parsed by fixed patterns in code, never by
@@ -443,6 +453,10 @@ class Orchestrator:
             reply = await self._run_turn(text, turn, extra_system, speaker_id, low_confidence, on_text)
             ordinary = True
 
+        if hangout_turn:
+            # Kept apart: nothing from the group chat goes into history, memory, the graph or any later prompt.
+            self._history = self._history[-self._history_turns :]
+            return reply
         await self._record(text, reply, turn)
         if ordinary and self._graph is not None:
             self._graph.observe(
@@ -520,11 +534,35 @@ class Orchestrator:
             reply = translate.STOPPED_HI if hi else translate.STOPPED
         elif not self._interpreting and self._pending is None and translate.is_start(text):
             self._interpreting = True
+            self._hangout_on = False
             reply = translate.STARTED_HI if hi else translate.STARTED
         else:
             return None
         self._history.append([_text_msg("user", text), _text_msg("assistant", reply)])
         return reply
+
+    async def _hangout_turn(self, text: str) -> str | None:
+        """The group chat. Returns the reply, or None when this turn is not part of it.
+
+        The user's own words go to the group untouched; the model composes nothing and sees nothing of it."""
+        assert self._hangout is not None
+        if self._hangout_on:
+            if hangout_stop(text):
+                self._hangout_on = False
+                return LEFT
+            if self._life_turn.private and not self._interpreting:
+                self._hangout_on = False  # distress or a wish to talk: leave the group, listen as Sutra
+                return None
+            if heavy(text) or upset(text):
+                return WITHHELD  # money, health, loss, family and legal trouble stay out of the group
+            return await self._hangout.send(text)
+        if hangout_start(text) and self._pending is None and (self._interpreting or not self._life_turn.private):
+            self._interpreting = False
+            if not await self._hangout.enter():
+                return UNREACHABLE
+            self._hangout_on = True
+            return ENTRY
+        return None
 
     def _try_reminder(self, text: str) -> str | None:
         """Set a reminder from a "remind me ..." utterance, if it is one.
