@@ -1,14 +1,26 @@
 """The turn loop and the confirmation gate.
 
-``Orchestrator.respond(text) -> str`` is the whole public surface: one user
-utterance in, one reply out, with gateway tool calls in between. It has no
-terminal dependencies, so a voice pipeline can call it directly later.
+``Orchestrator.respond(text, *, speaker_id=None, addressed_to_assistant=True)``
+is the whole public surface: one user utterance in, one reply out, with
+gateway tool calls in between. It has no terminal dependencies, so a voice
+pipeline can call it directly later.
 
 Safety property: the conversational model can never confirm an action.
 ``gateway_confirm`` is not in the tool list it is given, a model request for
 it is refused, and the only code that calls it is ``_confirm_pending``,
 which runs only after the user's own reply was classified ``affirm`` by an
 isolated classifier that sees no tool results.
+
+Safety property: a pending confirmation is bound to the person who asked
+for the action, not just to this process. ``respond`` takes the voice
+layer's turn context — ``speaker_id`` (the recognised voiceprint id, or
+``None`` when the speaker is unknown) and ``addressed_to_assistant``.
+A turn that is not addressed to the assistant is ignored entirely, and a
+turn from any speaker other than the one who requested the pending action
+never reaches the consent classifier and never consumes the pending
+action. Only an addressed turn from the requesting speaker can confirm.
+The text/REPL channel passes no speaker id on either side of a
+confirmation, so it keeps its single-typist semantics.
 """
 
 from __future__ import annotations
@@ -64,6 +76,10 @@ class PendingAction:
     description: str
     expires_at: datetime
     reasks: int = 0
+    # The speaker who asked for this action. Only a confirmation turn from
+    # the same speaker can affirm it; ``None`` is the text channel, where
+    # there is no voiceprint and the only typist is the owner.
+    requesting_speaker_id: str | None = None
 
 
 @dataclass
@@ -125,6 +141,21 @@ class Orchestrator:
     async def close(self) -> None:
         await self._gateway.close()
 
+    def close_session(self) -> None:
+        """End the current conversation session.
+
+        Drops any pending action — it must not be affirmable by the next
+        session's first utterance — and clears the conversation history.
+        The voice layer calls this on an explicit close ("that's all"),
+        on addressee loss, or on an inactivity timeout. A process restart
+        is a new session by construction; this makes the boundary explicit
+        instead of relying on restart to clear state.
+        """
+        if self._pending is not None:
+            log.debug("session closed with a pending action; dropping it")
+        self._pending = None
+        self._history = []
+
     @property
     def pending(self) -> PendingAction | None:
         return self._pending
@@ -144,19 +175,46 @@ class Orchestrator:
 
     # ------------------------------------------------------------- public turn
 
-    async def respond(self, text: str) -> str:
+    async def respond(
+        self,
+        text: str,
+        *,
+        speaker_id: str | None = None,
+        addressed_to_assistant: bool = True,
+    ) -> str:
+        # Speaker/addressee gate. This sits in front of the pending branch,
+        # not just in front of new requests: a turn that is not addressed to
+        # the assistant is ignored entirely — never classified, never
+        # answered, and it never consumes a pending confirmation.
+        if not addressed_to_assistant:
+            log.debug("ignoring turn not addressed to the assistant")
+            return ""
+
         turn = _Turn()
         extra_system = ""
         reply: str | None = None
 
-        if self._pending is not None:
+        # A pending confirmation is reachable only by the speaker who asked
+        # for the action. Any other speaker's turn is handled as an ordinary
+        # turn below: it never reaches the consent classifier and the
+        # pending action stays pending until it expires.
+        if self._pending is not None and self._speaker_may_confirm(speaker_id):
             reply, extra_system = await self._handle_pending(text, turn)
         if reply is None:
-            reply = await self._run_turn(text, turn, extra_system)
+            reply = await self._run_turn(text, turn, extra_system, speaker_id)
 
         await self._record(text, reply, turn)
         self._history = self._history[-self._history_turns :]
         return reply
+
+    def _speaker_may_confirm(self, speaker_id: str | None) -> bool:
+        """True only if this turn's speaker is the one who requested the
+        pending action. Fail-closed: an unknown speaker (``None``) can never
+        confirm an action an identified speaker requested, and vice versa.
+        ``None`` matches ``None`` — the text channel, where there is no
+        voiceprint and the only typist is the owner."""
+        pending = self._pending
+        return pending is not None and speaker_id == pending.requesting_speaker_id
 
     # -------------------------------------------------------- confirmation gate
 
@@ -239,7 +297,9 @@ class Orchestrator:
 
     # --------------------------------------------------------------- main turn
 
-    async def _run_turn(self, text: str, turn: _Turn, extra_system: str) -> str:
+    async def _run_turn(
+        self, text: str, turn: _Turn, extra_system: str, speaker_id: str | None = None
+    ) -> str:
         memories = await self._recall(text)
         system = self._system
         block = format_memory_block(memories, self._now())
@@ -280,7 +340,7 @@ class Orchestrator:
                     results.append(self._skipped(use, _SKIPPED_LIMIT, turn))
                 else:
                     calls += 1
-                    block_result, created = await self._execute(use, turn)
+                    block_result, created = await self._execute(use, turn, speaker_id)
                     results.append(block_result)
                     pending_created = pending_created or created
             msgs.append({"role": "user", "content": results})
@@ -341,7 +401,9 @@ class Orchestrator:
         turn.tools.append(ToolCallRecord(use["name"], "skipped"))
         return {"type": "tool_result", "tool_use_id": use["id"], "content": message, "is_error": True}
 
-    async def _execute(self, use: dict[str, Any], turn: _Turn) -> tuple[dict[str, Any], bool]:
+    async def _execute(
+        self, use: dict[str, Any], turn: _Turn, speaker_id: str | None = None
+    ) -> tuple[dict[str, Any], bool]:
         """Run one model-requested tool call. Returns (tool_result block, pending_created)."""
         name = use["name"]
         args = use.get("input")
@@ -380,7 +442,20 @@ class Orchestrator:
 
         if result.kind == "pending":
             info: PendingInfo = result.pending  # type: ignore[assignment]
-            self._pending = PendingAction(info.pending_id, info.description, info.expires_at)
+            if self._pending is not None:
+                # Never overwrite an action that is still awaiting its
+                # requester's confirmation — e.g. when a different speaker's
+                # ordinary turn runs while one is held. The new action is
+                # not held; the model is told to ask again later.
+                log.warning("tool %s held a second action while one is pending; skipped", name)
+                turn.tools.append(ToolCallRecord(name, "skipped"))
+                return block(_SKIPPED_PENDING, True), False
+            self._pending = PendingAction(
+                info.pending_id,
+                info.description,
+                info.expires_at,
+                requesting_speaker_id=speaker_id,
+            )
             turn.tools.append(ToolCallRecord(name, "pending"))
             payload = json.dumps(
                 {
