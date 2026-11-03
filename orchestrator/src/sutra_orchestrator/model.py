@@ -232,6 +232,19 @@ STRUCTURED_TOOLS: dict[str, dict[str, Any]] = {
             "required": ["items"],
         },
     },
+    "humor_reaction": {
+        "name": "record_humor",
+        "description": "Record whether the assistant joked and how the person reacted.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "joked": {"type": "boolean"},
+                "reaction": {"type": "string", "enum": ["laughed", "smiled", "neutral", "groaned", "annoyed"]},
+                "stop": {"type": "boolean"},
+            },
+            "required": ["joked"],
+        },
+    },
     "judgement": {
         "name": "record_judgement",
         "description": "Decide whether to speak up now, and how.",
