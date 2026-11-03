@@ -67,7 +67,7 @@ class StubOrchestrator:
         self.cancelled = False
         self.delay = 0.0
 
-    async def respond(self, text):
+    async def respond(self, text, **_):
         self.heard.append(text)
         await asyncio.sleep(self.delay)
         return self.replies.pop(0)
@@ -453,7 +453,7 @@ class Lane:
         self.pending = None
         self.notes = []
 
-    async def respond(self, text):
+    async def respond(self, text, **_):
         self.shared["heard"].append((self.id, text))
         delay, reply, holds = self.shared["responses"][text]
         await asyncio.sleep(delay)
@@ -775,3 +775,36 @@ async def test_not_now_keeps_it_for_later_without_asking_the_classifier(tmp_path
     row = store.get(iid)
     assert row.status == "proposed" and row.offered_at is not None
     assert speaker.said[-1] == "Okay, I'll ask another time."
+
+
+async def test_a_ready_timely_offer_is_said_at_a_quiet_moment_and_registered_for_the_answer(tmp_path):
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    from sutra_orchestrator.offers import OffersService, OffersStore
+
+    from .fakes import NOW, Clock
+
+    offers = OffersService(OffersStore(tmp_path), ZoneInfo("UTC"), now=Clock())
+    sid = offers.add_signal(
+        "weather", "Snow on the pass soon", source="w", expires_at=NOW + timedelta(hours=1)
+    )
+    teaser = "Heads up, snow is expected on the mountain road soon, so you may want to wait."
+    offers.store.update_signal(
+        sid, status="ready", style="tell", teaser=teaser, benefit=0.9, reason="r", retry_hours=2
+    )
+    s, shared, mic, speaker, out = build(
+        [(0.0, b"c")],
+        {b"c": T("thanks for that")},
+        {"thanks for that": (0.0, "You're welcome.", False)},
+        commands=[("q", 0.8)],
+    )
+    registered = []
+    s._fg.open_offer = None
+    s._fg.set_open_offer = lambda offer: registered.append(offer)
+    s.attach_offers(offers)
+    offers._on_ready()  # the background pass found a signal worth saying
+    await s.run()
+    assert speaker.said[0] == teaser  # said as a plain heads-up, not turned into a question
+    assert [o.signal_id for o in registered] == [sid] and registered[0].style == "tell"
+    assert offers.store.get_signal(sid).status == "offered"

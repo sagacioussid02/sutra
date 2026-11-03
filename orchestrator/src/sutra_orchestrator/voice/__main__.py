@@ -20,6 +20,7 @@ from ..orchestrator import Orchestrator
 from ..prompts import load_prompt
 from ..agents.factory import build_agent_service
 from ..interests import InterestService, InterestStore, Reflector
+from ..offers import build_graph_and_offers
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
 from .config import load_voice_config
@@ -98,6 +99,7 @@ async def _run(verbose: bool) -> int:
                 reflection_hours=config.reflection_hours,
                 nudge_hours=config.nudge_hours,
             )
+        graph, offers = build_graph_and_offers(config, model, _memory_dir)
         agents = None
         if config.agents_enabled:
             agents = build_agent_service(
@@ -112,6 +114,8 @@ async def _run(verbose: bool) -> int:
             reminders=reminders,
             agents=agents,
             interests=interests,
+            graph=graph,
+            offers=offers,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
@@ -142,6 +146,9 @@ async def _run(verbose: bool) -> int:
         if interests is not None:
             session.attach_interests(interests)
             interests.start_task()
+        if offers is not None:
+            session.attach_offers(offers)
+            offers.start_task()
         if agents is not None:
             orchestrator.set_research_hooks(session.can_start_job, session.adopt_research)
         if reminder_scheduler is not None and reminder_store is not None:
@@ -159,7 +166,10 @@ async def _run(verbose: bool) -> int:
             await orchestrator.cancel_research()
             if interests is not None:
                 await interests.stop()
+            if offers is not None:
+                await offers.stop_task()
             await orchestrator.flush()
+            await orchestrator.flush_graph()
             if memory is not None:
                 memory.close()
             if reminder_store is not None:
@@ -168,6 +178,10 @@ async def _run(verbose: bool) -> int:
                 agents.store.close()
             if interests is not None:
                 interests.store.close()
+            if graph is not None:
+                graph.store.close()
+            if offers is not None:
+                offers.store.close()
     finally:
         await gateway.close()
     return 0

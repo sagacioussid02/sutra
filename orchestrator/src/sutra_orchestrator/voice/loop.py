@@ -106,6 +106,7 @@ class VoiceSession:
         self._notify = asyncio.Event()
         self._interests = None  # InterestService, attached by the caller
         self._i_offer = None  # the interest question currently put to the user
+        self._offers = None  # OffersService, attached by the caller
         self._reminders: deque[tuple[object, str, bool]] = deque()
         self._on_reminder_spoken = on_reminder_spoken
         self._read_task: asyncio.Future | None = None
@@ -118,6 +119,29 @@ class VoiceSession:
         """Let new interest proposals, changes and check-ins be asked about at quiet moments."""
         self._interests = service
         service.set_on_offer(self._notify.set)
+
+    def attach_offers(self, service) -> None:
+        """Let ready outside signals be said at quiet moments, in words the judge chose."""
+        self._offers = service
+        service.set_on_ready(self._notify.set)
+
+    async def _maybe_timely(self) -> bool:
+        """Say a ready timely offer if the moment is quiet. The answer is read by the next turn."""
+        if (
+            self._offers is None
+            or self._i_offer is not None
+            or self._offer is not None
+            or self._fg.open_offer is not None
+            or self._fg.pending is not None
+        ):
+            return False
+        notice = self._offers.ready_notice()
+        if notice is None or not notice.teaser:
+            return False
+        self._fg.set_open_offer(notice)
+        self._out(f"sutra> {notice.teaser}")
+        await self._say(notice.teaser)
+        return True
 
     async def _maybe_interest_offer(self) -> bool:
         if self._interests is None or self._i_offer is not None or self._offer is not None:
@@ -217,12 +241,15 @@ class VoiceSession:
                 self._interests is not None and self._interests.next_offer() is not None
             ):
                 await self._conversation(announce=True)
+            elif self._offers is not None and self._offers.has_ready():
+                await self._conversation(announce=True)
 
     async def _conversation(self, announce: bool = False) -> None:
         """Take turns. In conversation mode keep listening after each reply until you go quiet."""
         try:
             if announce and not await self._maybe_offer():
-                await self._maybe_interest_offer()
+                if not await self._maybe_timely():
+                    await self._maybe_interest_offer()
             carry: Transcript | None = None
             while True:
                 try:
@@ -333,7 +360,9 @@ class VoiceSession:
             self._out("  I didn't catch any words.")
             return False, None
 
-        reply, interrupted = await self._respond(lane, text)
+        reply, interrupted = await self._respond(
+            lane, text, low_confidence=transcript.confidence < self._s.min_confidence
+        )
         if reply is not None:
             self._out(f"sutra> {reply}")
             await self._say(reply)
@@ -343,7 +372,8 @@ class VoiceSession:
             if lane is self._awaiting and lane.pending is None:
                 self._awaiting = None
         if interrupted is None and not await self._maybe_offer():  # a natural gap: now is the time to ask
-            await self._maybe_interest_offer()
+            if not await self._maybe_timely():
+                await self._maybe_interest_offer()
         return True, interrupted
 
     def _show_pending(self, lane: Orchestrator) -> None:
@@ -372,14 +402,14 @@ class VoiceSession:
     # ------------------------------------------------------------- doing the work
 
     async def _respond(
-        self, lane: Orchestrator, text: str
+        self, lane: Orchestrator, text: str, *, low_confidence: bool = False
     ) -> tuple[str | None, Transcript | None]:
         """Run the request. Returns (reply or None if detached, utterance that interrupted it)."""
         if not self._recorder.auto_stop:
-            return await self._respond_with_filler(lane, text), None
+            return await self._respond_with_filler(lane, text, low_confidence), None
 
         loop = asyncio.get_running_loop()
-        work = asyncio.ensure_future(lane.respond(text))
+        work = asyncio.ensure_future(lane.respond(text, low_confidence=low_confidence))
         started = loop.time()
         timers: list[tuple[float, str]] = []
         if self._s.filler_delay > 0 and self._s.fillers:
@@ -424,7 +454,9 @@ class VoiceSession:
         self._state.notice_index += 1
         return line
 
-    async def _respond_with_filler(self, lane: Orchestrator, text: str) -> str:
+    async def _respond_with_filler(
+        self, lane: Orchestrator, text: str, low_confidence: bool = False
+    ) -> str:
         """Press-Enter mode cannot listen while working, so only the short filler applies."""
         started = False
 
@@ -439,7 +471,7 @@ class VoiceSession:
 
         task = asyncio.create_task(filler())
         try:
-            return await lane.respond(text)
+            return await lane.respond(text, low_confidence=low_confidence)
         finally:
             if started:
                 try:
