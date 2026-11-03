@@ -31,8 +31,10 @@ def spoken_when(fire_at: datetime, now: datetime, tz: ZoneInfo) -> str:
         day = "today"
     elif (local.date() - today).days == 1:
         day = "tomorrow"
+    elif (local.date() - today).days < 7:
+        day = local.strftime("on %A")
     else:
-        day = local.strftime("on %B ") + str(local.day)
+        day = local.strftime("on %A, %B ") + str(local.day)
     return f"{day} at {clock}"
 
 

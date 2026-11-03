@@ -695,3 +695,17 @@ async def test_conversation_mode_off_takes_one_turn_per_enter():
     )
     await s.run()
     assert speaker.said == ["One."]
+
+
+async def test_a_fired_reminder_is_spoken_without_asking_and_marked_heard():
+    s, shared, mic, speaker, out = build([], {}, {}, commands=[("", 0.3), ("q", 0.1)])
+    heard = []
+    s._on_reminder_spoken = heard.append
+    s.deliver_reminder("e1", "call Sam")
+    s.deliver_reminder("e2", "water the plants", late=True)
+    await s.run()
+    assert speaker.said == [
+        "Reminder: call Sam.",
+        "Sorry, this one is late. You asked me to remind you: water the plants.",
+    ]
+    assert heard == ["e1", "e2"]

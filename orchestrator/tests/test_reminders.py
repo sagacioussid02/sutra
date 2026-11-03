@@ -371,3 +371,53 @@ def test_config_reminders_defaults_and_overrides():
 
     with pytest.raises(ConfigError):
         load_config({**base, "SUTRA_REMINDERS_TZ": "Not/AZone"}, dotenv_path=None)
+
+
+# ------------------------------------------------- natural phrasings (trailing time etc.)
+
+
+def test_time_may_follow_the_reminder_text():
+    got = parse("to call Sam at 5pm")
+    assert got is not None and got.text == "call Sam"
+    assert got.fire_at.hour == 17
+    got = parse("to buy milk in twenty minutes")
+    assert got is not None and got.text == "buy milk"
+    assert got.fire_at == NOW + timedelta(minutes=20)
+
+
+def test_weekday_and_date_default_to_nine_am_and_are_explicit_when_given():
+    got = parse("on Friday to pay rent")
+    assert got is not None and got.text == "pay rent"
+    assert (got.fire_at.hour, got.fire_at.minute, got.fire_at.weekday()) == (9, 0, 4)
+    got = parse("to email Ann at 2pm on Friday")
+    assert got is not None and got.fire_at.hour == 14 and got.fire_at.weekday() == 4
+    got = parse("on December 20th to renew passport")
+    assert got is not None and (got.fire_at.month, got.fire_at.day) == (12, 20)
+
+
+def test_next_weekday_means_next_week():
+    # NOW is Monday 12 October 2026.
+    assert parse("on Friday to x").fire_at.day == 16
+    assert parse("next Friday to x").fire_at.day == 23
+    assert parse("next Tuesday to x").fire_at.day == 20  # not tomorrow
+
+
+def test_bare_hour_needs_a_part_of_day():
+    got = parse("to take my pills at 8 tonight")
+    assert got is not None and got.fire_at.hour == 20
+    assert parse("to call mom at 3") is None
+    assert parse("to run tomorrow morning") is None  # no exact time: ask
+
+
+def test_two_times_or_no_text_ask_instead_of_guessing():
+    assert parse("to call at 3pm and at 4pm") is None
+    assert parse("to call in 5 minutes at 4pm") is None
+    assert parse("to call Sam") is None
+
+
+def test_leading_phrases_and_questions():
+    assert reminder_request("Can you remind me in an hour to stretch?") == "in an hour to stretch?"
+    assert reminder_request("set a reminder for 5pm to call Sam") == "for 5pm to call Sam"
+    assert parse("for 5pm to call Sam").text == "call Sam"
+    assert reminder_request("remind me what I said yesterday") is None
+    assert reminder_request("remind me of my goals") is None
