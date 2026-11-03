@@ -65,6 +65,7 @@ class OpenOffer:
     step: str = "none"
     node_id: int | None = None
     signal_id: int | None = None
+    source: str = ""  # who produced the signal, for a timely offer
     detail: str = ""  # a signal's summary: untrusted data, used only to deliver an accepted ask
     retry_hours: float = 6.0
 
@@ -89,6 +90,7 @@ class OffersService:
         now: Callable[[], datetime] | None = None,
         on_ready: Callable[[], None] | None = None,
     ) -> None:
+        self._hooks: dict[str, Callable[[Signal, str], None]] = {}
         self._on_ready = on_ready
         self._store = store
         self._tz = tz
@@ -379,9 +381,30 @@ class OffersService:
             self._store.update_signal(sig.id, status="offered")
             return OpenOffer(
                 offer_id, "timely", style, sig.topic, sig.teaser or "", signal_id=sig.id,
-                detail=sig.summary, retry_hours=sig.retry_hours or 6.0,
+                source=sig.source, detail=sig.summary, retry_hours=sig.retry_hours or 6.0,
             )
         return None
+
+    def add_ready_signal(
+        self, kind: str, summary: str, teaser: str, *, source: str, topic_hint: str, expires_at: datetime
+    ) -> int | None:
+        """A signal that is a question in its own right (it skips the judge, not the arbiter).
+
+        For things the user must be asked, such as a proposed lesson, where "is it worth saying" is not
+        for a model to decide. It is still said one at a time, at a quiet moment, and can be blocked.
+        """
+        sid = self.add_signal(kind, summary, source=source, urgency="low", expires_at=expires_at, topic_hint=topic_hint)
+        if sid is None:
+            return None
+        self._store.update_signal(sid, status="ready", style="ask", teaser=teaser, benefit=1.0,
+                                  reason="asked directly", retry_hours=72.0)
+        if self._on_ready is not None:
+            self._on_ready()
+        return sid
+
+    def on_resolve(self, source: str, hook: Callable[[Signal, str], None]) -> None:
+        """Call ``hook(signal, outcome)`` when an offer made from this source's signal is answered."""
+        self._hooks[source] = hook
 
     def has_ready(self) -> bool:
         return any(s.expires_at > self._now() for s in self._store.signals(("ready",)))
@@ -407,7 +430,11 @@ class OffersService:
         assert outcome in ("accepted", "deferred", "declined", "ignored"), outcome
         now = self._now()
         self._store.resolve(offer.offer_id, outcome, now)
-        self._bars.record(offer.kind, outcome, now)
+        sig = self._store.get_signal(offer.signal_id) if offer.signal_id is not None else None
+        if sig is None or sig.source not in self._hooks:
+            self._bars.record(offer.kind, outcome, now)
+        else:
+            self._hooks[sig.source](sig, outcome)  # a question the user was asked, not an offer to learn from
         retry = now + timedelta(hours=offer.retry_hours)
         if offer.kind == "followup" and offer.node_id is not None:
             if outcome == "accepted" and self._graph is not None:
@@ -420,6 +447,11 @@ class OffersService:
                 self._store.set_hold(f"node:{offer.node_id}", retry)
         elif offer.kind == "timely" and offer.signal_id is not None:
             sig = self._store.get_signal(offer.signal_id)
+            if sig is not None and sig.source in self._hooks:
+                # A question from a client that owns the follow-up (it asks again itself): never parked
+                # as "held", where the judge would pick it up and weigh it like an ordinary signal.
+                self._store.update_signal(offer.signal_id, status="done")
+                return
             if sig is not None and sig.source == RESEARCH_SOURCE:
                 self._bars.record("research", outcome, now)  # how welcome idle findings are
             if outcome == "deferred" and sig is not None and sig.expires_at > retry:

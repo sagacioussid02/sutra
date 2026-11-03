@@ -565,6 +565,29 @@ class SqliteMemory:
             for r in rows
         ]
 
+    def recent_exchanges(
+        self, since: datetime, limit: int = 400
+    ) -> list[tuple[str, datetime, str, str | None, list[str]]]:
+        """Hot episodes since ``since``, oldest first, as (id, time, utterance, reply, tool names).
+
+        For learning from corrections: the caller pairs a reply with the user's next utterance, and is
+        responsible for leaving out turns that used tools. Read-only.
+        """
+        rows = self._conn.execute(
+            "SELECT id, ts, utterance, reply, tools FROM episodes WHERE ts >= ? ORDER BY ts DESC LIMIT ?",
+            (_iso(since), limit),
+        ).fetchall()
+        return [
+            (
+                r["id"],
+                datetime.fromisoformat(r["ts"]),
+                r["utterance"],
+                r["reply"],
+                [t.get("name", "") for t in json.loads(r["tools"])],
+            )
+            for r in reversed(rows)
+        ]
+
     def _archive_old_episodes(self) -> int:
         """Move episodes older than the hot period to the archive. Never deletes."""
         cutoff = _iso(self._now() - timedelta(days=self._hot_days))

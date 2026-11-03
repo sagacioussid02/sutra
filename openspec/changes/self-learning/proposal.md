@@ -23,7 +23,7 @@ Out of scope, deliberately: any automatic change to prompts or code, learning th
 
 ## Impact
 
-- New package `orchestrator/src/sutra_orchestrator/lessons/`, a local `lessons.db` (owner-only, gitignored), a probe file `evals/lesson_probes.jsonl` and a runner `evals/run_lesson_probes.py`.
+- New package `orchestrator/src/sutra_orchestrator/lessons/`, a local `lessons.db` (owner-only, gitignored), a probe file inside the package (`lessons/probes.jsonl`) and a runner `evals/run_lesson_probes.py`.
 - `SqliteMemory` gains a read-only `recent_exchanges` (utterance, the assistant's reply on no-tool turns, tool names). `Orchestrator` adds the lessons block to the system prompt. `OffersService` gains a resolve hook so a proposal asked about by voice is approved or rejected by the user's answer.
 - One small reflection call a day, and probe runs only when the user approves a guidance lesson.
 - Depends on `assistant-memory`, `interest-profile`, and `episode-graph-offers`.
