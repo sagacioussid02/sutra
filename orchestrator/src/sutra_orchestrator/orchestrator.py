@@ -47,6 +47,7 @@ from .memory import (
 )
 from .model import ModelClient
 from .prompts import load_prompt
+from .reminders import ReminderService
 
 log = logging.getLogger("sutra_orchestrator")
 
@@ -106,6 +107,7 @@ class Orchestrator:
         gateway: GatewaySession,
         classifier: IntentClassifier,
         memory: MemoryProvider | None = None,
+        reminders: ReminderService | None = None,
         max_tool_calls: int = 6,
         history_turns: int = 20,
         reask_limit: int = 2,
@@ -117,6 +119,7 @@ class Orchestrator:
         self._gateway = gateway
         self._classifier = classifier
         self._memory: MemoryProvider = memory if memory is not None else NullMemory()
+        self._reminders = reminders
         self._max_tool_calls = max_tool_calls
         self._history_turns = history_turns
         self._reask_limit = reask_limit
@@ -176,6 +179,7 @@ class Orchestrator:
             gateway=self._gateway,
             classifier=self._classifier,
             memory=self._memory,
+            reminders=self._reminders,
             max_tool_calls=self._max_tool_calls,
             history_turns=self._history_turns,
             reask_limit=self._reask_limit,
@@ -246,11 +250,37 @@ class Orchestrator:
         if self._pending is not None and self._speaker_may_confirm(speaker_id):
             reply, extra_system = await self._handle_pending(text, turn)
         if reply is None:
+            # "Remind me ..." is handled deterministically before any model
+            # call: the time is parsed by fixed patterns in code, never by
+            # the model, and an unparseable time gets a clarification reply
+            # instead of a guess. A pending confirmation (handled above)
+            # still takes precedence over a reminder request.
+            reply = self._try_reminder(text)
+        if reply is None:
             reply = await self._run_turn(text, turn, extra_system, speaker_id)
 
         await self._record(text, reply, turn)
         self._history = self._history[-self._history_turns :]
         return reply
+
+    def _try_reminder(self, text: str) -> str | None:
+        """Set a reminder from a "remind me ..." utterance, if it is one.
+
+        Returns the reply, or None when the utterance is not a reminder
+        request. Like the fixed confirmation replies, the turn is recorded
+        in history; a pending action is never touched here.
+        """
+        if self._reminders is None:
+            return None
+        reply = self._reminders.try_handle(text, self._now())
+        if reply is None:
+            return None
+        self._history.append([_text_msg("user", text), _text_msg("assistant", reply)])
+        return reply
+
+    @property
+    def reminders(self) -> ReminderService | None:
+        return self._reminders
 
     def _speaker_may_confirm(self, speaker_id: str | None) -> bool:
         """True only if this turn's speaker is the one who requested the
