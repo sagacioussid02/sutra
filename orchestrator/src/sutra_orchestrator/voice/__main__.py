@@ -77,7 +77,10 @@ async def _run(verbose: bool) -> int:
             hint = build_hint(vc.assistant_name, vc.stt_hints, remembered)
             cloud = Engines(
                 OpenAITranscriber(vc.openai_api_key, vc.stt_model, prompt=hint, language=vc.language),
-                OpenAISpeaker(vc.openai_api_key, vc.tts_model, vc.tts_voice),
+                OpenAISpeaker(
+                    vc.openai_api_key, vc.tts_model, vc.tts_voice,
+                    **({"instructions": vc.tts_style} if vc.tts_style else {}),
+                ),
                 "cloud: OpenAI speech, audio and spoken replies go to OpenAI",
             )
         reminder_store: ReminderStore | None = None
@@ -160,6 +163,7 @@ async def _run(verbose: bool) -> int:
             wait_notice_delay=vc.wait_notice_delay,
             record_dir=Path(vc.record_dir).expanduser() if vc.record_dir else None,
             barge_in=output_is_headphones() if vc.barge_in == "auto" else vc.barge_in == "on",
+            stream=vc.stream_reply,
         )
         session = VoiceSession(
             orchestrator,
@@ -181,6 +185,10 @@ async def _run(verbose: bool) -> int:
             lessons.start_task()
         if idle is not None:
             idle.start_task()
+        warm = None
+        if cloud is not None and hasattr(cloud.speaker, "prewarm"):
+            # The "hmm, one sec" fillers are synthesized once now, so they play at once when needed.
+            warm = asyncio.create_task(cloud.speaker.prewarm(settings.fillers))
         if agents is not None:
             orchestrator.set_research_hooks(session.can_start_job, session.adopt_research)
         if reminder_scheduler is not None and reminder_store is not None:
@@ -192,6 +200,8 @@ async def _run(verbose: bool) -> int:
         try:
             await session.run()
         finally:
+            if warm is not None:
+                warm.cancel()
             if reminder_scheduler is not None:
                 await reminder_scheduler.stop()
             await session.close()

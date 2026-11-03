@@ -26,6 +26,7 @@ confirmation, so it keeps its single-typist semantics.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import time
@@ -52,6 +53,7 @@ from .memory import (
 )
 from .model import ModelClient
 from .prompts import load_prompt
+from .streaming import Streamer
 from .reminders import ReminderService
 
 log = logging.getLogger("sutra_orchestrator")
@@ -362,7 +364,13 @@ class Orchestrator:
         speaker_id: str | None = None,
         addressed_to_assistant: bool = True,
         low_confidence: bool = False,
+        on_text: Callable[[str], None] | None = None,
     ) -> str:
+        """One utterance in, one reply out.
+
+        ``on_text``, if given, is called with the reply's sentences as the model writes them (a voice
+        client speaks them at once). The returned reply is still the whole reply.
+        """
         # Speaker/addressee gate. This sits in front of the pending branch,
         # not just in front of new requests: a turn that is not addressed to
         # the assistant is ignored entirely — never classified, never
@@ -396,7 +404,7 @@ class Orchestrator:
             # still takes precedence over a reminder request.
             reply = self._try_reminder(text)
         if reply is None:
-            reply = await self._run_turn(text, turn, extra_system, speaker_id, low_confidence)
+            reply = await self._run_turn(text, turn, extra_system, speaker_id, low_confidence, on_text)
             ordinary = True
 
         await self._record(text, reply, turn)
@@ -573,11 +581,12 @@ class Orchestrator:
         extra_system: str,
         speaker_id: str | None = None,
         low_confidence: bool = False,
+        on_text: Callable[[str], None] | None = None,
     ) -> str:
         self._speaker = speaker_id
         followup = self._start_followup(text, extra_system, low_confidence)
         try:
-            return await self._run_turn_inner(text, turn, extra_system, speaker_id, followup)
+            return await self._run_turn_inner(text, turn, extra_system, speaker_id, followup, on_text)
         finally:
             if followup is not None and not followup.done():
                 followup.cancel()
@@ -608,6 +617,7 @@ class Orchestrator:
         extra_system: str,
         speaker_id: str | None,
         followup: "asyncio.Future[OpenOffer | None] | None",
+        on_text: Callable[[str], None] | None = None,
     ) -> str:
         memories = await self._recall(text)
         system = self._system
@@ -643,8 +653,8 @@ class Orchestrator:
 
         while True:
             started = time.perf_counter()
-            response = await self._model.complete(
-                system=system, messages=self._flat_history() + msgs, tools=tools
+            response = await self._complete(
+                on_text, system=system, messages=self._flat_history() + msgs, tools=tools
             )
             log.debug("model call took %.2fs", time.perf_counter() - started)
             msgs.append({"role": "assistant", "content": response.content})
@@ -676,7 +686,8 @@ class Orchestrator:
                 msgs.append(_text_msg("assistant", reply))
                 break
             if pending_created:
-                final = await self._model.complete(
+                final = await self._complete(
+                    on_text,
                     system=system + "\n\n" + _READBACK_NOTE,
                     messages=self._flat_history() + msgs,
                     tools=tools,
@@ -740,6 +751,16 @@ class Orchestrator:
         self._open_offer = offer
         self._open_offer_at = self._now()
         return reply
+
+    async def _complete(self, on_text: Callable[[str], None] | None, **kwargs: Any) -> Any:
+        """One model step, streamed to ``on_text`` when asked and when the model client can."""
+        can_stream = on_text is not None and "on_text" in inspect.signature(self._model.complete).parameters
+        if not can_stream:
+            return await self._model.complete(**kwargs)
+        streamer = Streamer(on_text)  # type: ignore[arg-type]
+        response = await self._model.complete(**kwargs, on_text=streamer.feed)
+        streamer.finish(response.stop_reason)
+        return response
 
     # ------------------------------------------------------------ research runs
 

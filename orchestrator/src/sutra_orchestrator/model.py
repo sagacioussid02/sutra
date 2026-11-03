@@ -6,6 +6,7 @@ Messages use the Anthropic Messages format throughout.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -38,6 +39,7 @@ class ModelClient(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         allow_tools: bool = True,
+        on_text: Callable[[str], None] | None = None,
     ) -> ModelResponse: ...
 
 
@@ -276,7 +278,9 @@ class AnthropicModel:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         allow_tools: bool = True,
+        on_text: Callable[[str], None] | None = None,
     ) -> ModelResponse:
+        """One model step. With ``on_text`` the reply is streamed and each text delta is passed to it."""
         kwargs: dict[str, Any] = {
             "model": self._model,
             "max_tokens": self._max_tokens,
@@ -289,7 +293,13 @@ class AnthropicModel:
             kwargs["tools"] = tools
             if not allow_tools:
                 kwargs["tool_choice"] = {"type": "none"}
-        response = await self._client.messages.create(**kwargs)
+        if on_text is None:
+            response = await self._client.messages.create(**kwargs)
+        else:
+            async with self._client.messages.stream(**kwargs) as stream:
+                async for delta in stream.text_stream:
+                    on_text(delta)
+                response = await stream.get_final_message()
         blocks: list[dict[str, Any]] = []
         for block in response.content:
             if block.type == "text":

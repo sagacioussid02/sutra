@@ -23,7 +23,7 @@ class VoiceConfig:
     local_stt_model: str = "base.en"
     local_voice: str = ""
     min_confidence: float = 0.5
-    filler_delay: float = 1.5
+    filler_delay: float = 1.0
     start_private: bool = False
     record_dir: str = ""
     auto_stop: bool = True
@@ -33,6 +33,8 @@ class VoiceConfig:
     max_background: int = 2
     wait_notice_delay: float = 4.0
     stt_hints: tuple[str, ...] = ()
+    tts_style: str = ""
+    stream_reply: bool = True
     barge_in: str = "auto"  # "on", "off" or "auto" (on for headphones)
 
 
@@ -92,7 +94,7 @@ def load_voice_config(
         local_stt_model=merged.get("SUTRA_LOCAL_STT_MODEL") or "base.en",
         local_voice=merged.get("SUTRA_LOCAL_VOICE", ""),
         min_confidence=_float(merged, "SUTRA_MIN_CONFIDENCE", 0.5, 0.0, 1.0),
-        filler_delay=_float(merged, "SUTRA_FILLER_DELAY", 1.5, 0.0, 30.0),
+        filler_delay=_float(merged, "SUTRA_FILLER_DELAY", 1.0, 0.0, 30.0),
         start_private=start == "private",
         record_dir=merged.get("SUTRA_RECORD_AUDIO_DIR", ""),
         auto_stop=_flag(merged, "SUTRA_AUTO_STOP", True),
@@ -101,6 +103,8 @@ def load_voice_config(
         conversation=_flag(merged, "SUTRA_CONVERSATION", True),
         max_background=int(_float(merged, "SUTRA_MAX_BACKGROUND", 2, 0, 5)),
         wait_notice_delay=_float(merged, "SUTRA_WAIT_NOTICE_DELAY", 4.0, 0.0, 60.0),
+        tts_style=merged.get("SUTRA_TTS_STYLE", "").strip(),
+        stream_reply=_flag(merged, "SUTRA_STREAM_REPLY", True),
         stt_hints=tuple(h.strip() for h in (merged.get("SUTRA_STT_HINTS") or "").split(",") if h.strip()),
         barge_in=_barge_in(merged),
     )

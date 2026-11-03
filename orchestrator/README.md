@@ -261,6 +261,16 @@ question is open at a time.
 
 Not built yet: cancelling a job by voice ("never mind that").
 
+### Speaking while it thinks
+
+It starts talking as soon as the first sentence is written instead of waiting for the whole reply
+(a live check showed the first sentence about 0.7 to 0.8 seconds before the full reply on a short
+answer, more on a long one). A sentence is held back until the next one has begun, so a lead-in
+before a tool call is not spoken half-finished. The short fillers ("Hmm, one sec.") are synthesized once at
+start and replayed from memory, so they play at once, and they are skipped if the reply starts quickly.
+Run with `--verbose` to see, for each turn, how long hearing you, thinking, and getting to the first
+spoken word took. Turn streaming off with `SUTRA_STREAM_REPLY=off`.
+
 ### Interrupting it
 
 With **headphones**, just start talking while it speaks: it stops at once, hears you out, and
@@ -305,7 +315,9 @@ If `OPENAI_API_KEY` is not set, voice starts in private mode.
 | `SUTRA_CONVERSATION` | `on` (default): keep listening after each reply. `off`: one turn per Enter. |
 | `SUTRA_MAX_BACKGROUND` | Background jobs allowed at once. Default 2. |
 | `SUTRA_WAIT_NOTICE_DELAY` | Seconds before it says it is still working and invites another question. Default 4. |
-| `SUTRA_FILLER_DELAY` | Seconds before a slow reply gets a spoken "hmm, one sec". Default 1.5. |
+| `SUTRA_FILLER_DELAY` | Seconds before a slow reply gets a spoken "hmm, one sec". Default 1.0. |
+| `SUTRA_STREAM_REPLY` | `on` (default): speak the reply sentence by sentence as it is written. |
+| `SUTRA_TTS_STYLE` | Replaces the built-in speaking-style instructions sent to the voice (pace, warmth, pitch). |
 | `SUTRA_BARGE_IN` | `auto` (on for headphones), `on`, or `off`: stop speaking when you start talking. |
 | `SUTRA_STT_HINTS` | Extra names for the recognizer, comma-separated. |
 | `SUTRA_RECORD_AUDIO_DIR` | If set, each recording is saved there. Off by default. |
