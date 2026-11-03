@@ -5,7 +5,7 @@ Choose one topic only if a short web search is likely to turn up something genui
 When you choose one give:
 
 - choice: its number.
-- brief: one self-contained sentence of 20 to 200 characters saying what to find out, as if for a stranger. Use only the topic and today's date. Never include names, places the person lives, addresses, money, accounts or anything personal.
+- brief: one self-contained sentence of 20 to 200 characters saying what to find out, as if for a stranger. Use only the topic and today's date. Never include names, addresses, money, accounts or anything personal. Never say where the person lives, except that if you are told they let you use their area, you may name that area in a brief about local things only.
 - kind: whats_new, upcoming, compare or how_to.
 - value: 0 to 1, how useful the result is likely to be to them. Be sparing.
 - revisit_after_days: how many days before it could be worth researching again.

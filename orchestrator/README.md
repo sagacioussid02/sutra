@@ -501,3 +501,22 @@ Commands (text client): `/life` (list), `/life add plan <date> <text>`, `/life f
 | --- | --- | --- |
 | `SUTRA_LIFE` | on | `off` removes it |
 | `SUTRA_LIFE_DIR` | the memory directory | where `life.db` lives |
+
+## Weather, news and a morning brief
+
+Everything here is opt-in, uses free sources with no key, and only ever sends a city name (weather) or a topic word (news).
+
+- **Weather alerts.** Set `SUTRA_HOME_AREA="Orem, Utah"`. Every half hour it reads the next 18 hours of forecast and files a signal for snow, heavy rain, thunderstorms, strong wind, extreme cold or heat, once per kind per day, expiring when the weather passes. The offers system decides whether it matters to you now, using the conversation graph: a snow warning lands when you said you were driving up the mountain, and stays quiet otherwise. The wording is built from numbers, so it can be said plainly, in miles and degrees Fahrenheit unless `SUTRA_UNITS=metric`.
+- **News.** Off by default (`SUTRA_NEWS=on`, or `/feeds news on`). At most one headline roundup a day, on one of your approved interests or a topic in `SUTRA_NEWS_TOPICS`, from Google News RSS. Sutra says only "There's news about cricket, want to hear it?"; the headlines are web text, so they are given only after yes, as data. Roundups you accept make them more welcome; ones you decline or ignore make them rarer, down to none.
+- **Local things to do.** With a home area set, idle research can also look into local events and activities, and only then may its search name the area.
+- **Morning brief.** Say "give me my morning brief" or "what's my day look like": today's reminders and plans, the weather, and anything waiting. It is read-only and only when you ask.
+
+Text-client commands: `/feeds` (what is on, last checked), `/feeds news on|off`, `/feeds check`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SUTRA_HOME_AREA` | none | city for weather and local activities (only the name is sent) |
+| `SUTRA_NEWS` | off | headline roundups on your interests |
+| `SUTRA_NEWS_TOPICS` | none | extra news topics, comma-separated |
+| `SUTRA_UNITS` | `imperial` | or `metric` |
+| `SUTRA_FEEDS` | on | `off` removes the feeds (nothing happens without an area or news anyway) |

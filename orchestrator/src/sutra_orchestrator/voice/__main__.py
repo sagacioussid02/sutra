@@ -25,6 +25,7 @@ from ..idle import build_idle
 from ..lessons import build_lessons
 from ..personality import PersonalityService, PersonalityStore
 from ..life import LifeService, LifeStore
+from ..feeds import build_feeds
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
 from .config import load_voice_config
@@ -144,6 +145,7 @@ async def _run(verbose: bool) -> int:
             )
             if graph is not None:
                 graph.add_listener(life.on_episode)
+        feeds = build_feeds(config, offers, interests, reminder_store, life)
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -167,6 +169,7 @@ async def _run(verbose: bool) -> int:
             lessons=lessons,
             personality=personality,
             life=life,
+            feeds=feeds,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
@@ -206,6 +209,8 @@ async def _run(verbose: bool) -> int:
             lessons.start_task()
         if life is not None:
             life.start_task()
+        if feeds is not None:
+            feeds.start_task()
         if idle is not None:
             idle.start_task()
         warm = None
@@ -235,6 +240,8 @@ async def _run(verbose: bool) -> int:
                 await lessons.stop()
             if life is not None:
                 await life.stop()
+            if feeds is not None:
+                await feeds.stop()
             if idle is not None:
                 await idle.stop_task()
             if offers is not None:

@@ -49,6 +49,11 @@ class Config:
     offers_daily_max: int = 4
     offers_calls_per_day: int = 200
     offers_urgent_sources: tuple[str, ...] = ()
+    feeds_enabled: bool = True
+    home_area: str = ""
+    news_enabled: bool = False
+    news_topics: tuple[str, ...] = ()
+    units: str = "imperial"
     life_enabled: bool = True
     life_dir: str = "data"
     humor_enabled: bool = True
@@ -159,6 +164,11 @@ def load_config(
         offers_urgent_sources=tuple(
             t.strip() for t in (merged.get("SUTRA_OFFERS_URGENT_SOURCES") or "").split(",") if t.strip()
         ),
+        feeds_enabled=_bool(merged, "SUTRA_FEEDS", True),
+        home_area=" ".join((merged.get("SUTRA_HOME_AREA") or "").split()),
+        news_enabled=_bool(merged, "SUTRA_NEWS", False),
+        news_topics=tuple(t.strip() for t in (merged.get("SUTRA_NEWS_TOPICS") or "").split(",") if t.strip()),
+        units=_units(merged),
         life_enabled=_bool(merged, "SUTRA_LIFE", True),
         life_dir=merged.get("SUTRA_LIFE_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
         humor_enabled=_bool(merged, "SUTRA_HUMOR", True),
@@ -190,6 +200,13 @@ def load_config(
         or "data",
         reminders_tz=_timezone(merged),
     )
+
+
+def _units(env: Mapping[str, str]) -> str:
+    raw = (env.get("SUTRA_UNITS") or "imperial").strip().lower()
+    if raw not in ("imperial", "metric"):
+        raise ConfigError(f"SUTRA_UNITS must be imperial or metric, got {raw!r}")
+    return raw
 
 
 def _timezone(env: Mapping[str, str]) -> str:
