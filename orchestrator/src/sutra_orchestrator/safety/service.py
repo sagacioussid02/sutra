@@ -148,6 +148,18 @@ class SafetyService:
         self.silent = False
         self._set(to)
 
+    def raise_authenticated(self, to: Mode) -> None:
+        """The one non-keyboard way up: a passed one-time check. Only the authentication service calls this."""
+        log.info("mode raised after a passed check")
+        self.restore(to)
+
+    def tool_allowed_when_limited(self, name: str) -> bool:
+        """Would limited mode let this gateway tool through? (A reader.) Used to decide what needs a grant."""
+        if name in self._extra:
+            return True
+        _, _, rest = name.partition("_")
+        return bool(rest) and rest.split("_", 1)[0] in READ_VERBS
+
     # --------------------------------------------------------------- commands
 
     def command(self, text: str) -> Command | None:
