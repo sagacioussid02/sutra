@@ -23,6 +23,11 @@ from .graph import GraphCommands
 from .offers import OffersCommands, build_graph_and_offers
 from .idle import IdleCommands, build_idle
 from .lessons import LessonCommands, build_lessons
+from .personality import HumorCommands, PersonalityService, PersonalityStore
+from .life import LifeCommands, LifeService, LifeStore
+from .feeds import FeedCommands, build_feeds
+from .hangout import HangoutCommands, HangoutService, HttpGroupClient, parse_voices
+from .safety import Mode, ModeCommands, SafetyService
 from .agents.factory import build_agent_service
 from .reminders import ReminderScheduler, ReminderService, ReminderStore
 from .reminders.commands import ReminderCommands
@@ -140,6 +145,36 @@ async def _run(verbose: bool) -> int:
             else None
         )
         lesson_commands = LessonCommands(lessons) if lessons is not None else None
+        personality = (
+            PersonalityService(PersonalityStore(_memory_dir(config.personality_dir)), model)
+            if config.humor_enabled
+            else None
+        )
+        humor_commands = HumorCommands(personality) if personality is not None else None
+        life = None
+        if config.life_enabled:
+            life = LifeService(
+                LifeStore(_memory_dir(config.life_dir)), offers=offers, model=model, tz=ZoneInfo(config.reminders_tz),
+                spend=offers.spend_call if offers is not None else None,
+            )
+            if graph is not None:
+                graph.add_listener(life.on_episode)  # people and plans come from closed conversations
+        life_commands = LifeCommands(life) if life is not None else None
+        feeds = build_feeds(config, offers, interests, reminder_store, life)
+        feed_commands = FeedCommands(feeds) if feeds is not None else None
+        hangout = (
+            HangoutService(HttpGroupClient(config.gossip_url), parse_voices(config.hangout_voices))
+            if config.gossip_url
+            else None
+        )
+        hangout_commands = HangoutCommands(hangout, config.gossip_url) if hangout is not None else None
+        safety = SafetyService(
+            _memory_dir(config.safety_dir),
+            start=Mode(config.start_mode),
+            extra_tools=config.limited_tools,
+            duress_phrase=config.duress_phrase,
+        )
+        mode_commands = ModeCommands(safety)
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -151,7 +186,8 @@ async def _run(verbose: bool) -> int:
         # line (including "unknown command"), so it must be tried last.
         commands = CommandSet(
             reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands,
-            idle_commands, lesson_commands, memory_commands
+            idle_commands, lesson_commands, humor_commands, life_commands,
+            feed_commands, hangout_commands, mode_commands, memory_commands
         )
         orchestrator = Orchestrator(
             model=model,
@@ -164,6 +200,12 @@ async def _run(verbose: bool) -> int:
             graph=graph,
             offers=offers,
             lessons=lessons,
+            personality=personality,
+            life=life,
+            feeds=feeds,
+            hangout=hangout,
+            safety=safety,
+            assistant_gender=config.assistant_gender,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
@@ -201,8 +243,18 @@ async def _run(verbose: bool) -> int:
                     )
 
             interests.set_on_offer(announce)
+        # Every unprompted or outward-reaching path asks the one mode before it acts.
+        quiet = lambda: not safety.proactive_ok  # noqa: E731
+        if offers is not None:
+            offers.arbiter.set_quiet(quiet)
+        if feeds is not None:
+            feeds.set_quiet(quiet)
+        if idle is not None:
+            idle.set_quiet(quiet)
         count = await orchestrator.start()
         print(f"Connected to the gateway. {count} tools available. Blank line to quit.")
+        if safety.mode is not Mode.FULL:
+            print(f"Mode is {safety.mode.value}. Type /mode full to go back to full.")
         if memory is not None:
             known = sum(1 for m in memory.list_memories() if m.status == "active")
             print(f"Memory is on ({known} remembered). Type /help for memory commands.")
@@ -215,6 +267,10 @@ async def _run(verbose: bool) -> int:
             background_tasks.append(watch_task("offers", offers.start_task()))
         if lessons is not None:
             background_tasks.append(watch_task("lessons", lessons.start_task()))
+        if life is not None:
+            background_tasks.append(watch_task("life", life.start_task()))
+        if feeds is not None:
+            background_tasks.append(watch_task("feeds", feeds.start_task()))
         if idle is not None:
             background_tasks.append(watch_task("idle research", idle.start_task()))
             if idle.enabled:
@@ -232,6 +288,10 @@ async def _run(verbose: bool) -> int:
                 await interests.stop()
             if lessons is not None:
                 await lessons.stop()
+            if life is not None:
+                await life.stop()
+            if feeds is not None:
+                await feeds.stop()
             if idle is not None:
                 await idle.stop_task()
             if offers is not None:
@@ -254,6 +314,10 @@ async def _run(verbose: bool) -> int:
                 idle.store.close()
             if lessons is not None:
                 lessons.store.close()
+            if personality is not None:
+                personality.store.close()
+            if life is not None:
+                life.store.close()
     finally:
         await gateway.close()
     return 0

@@ -23,6 +23,12 @@ from ..interests import InterestService, InterestStore, Reflector
 from ..offers import build_graph_and_offers
 from ..idle import build_idle
 from ..lessons import build_lessons
+from ..personality import PersonalityService, PersonalityStore
+from ..life import LifeService, LifeStore
+from ..feeds import build_feeds
+from ..hangout import HangoutService, HttpGroupClient, parse_voices
+from ..safety import Mode, SafetyService
+from .wake import WakeMatcher
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
 from .config import load_voice_config
@@ -41,7 +47,8 @@ async def _run(verbose: bool) -> int:
     configure_logging(verbose, [config.token, config.api_key, vc.openai_api_key])
 
     local = Engines(
-        FasterWhisperTranscriber(vc.local_stt_model), SaySpeaker(vc.local_voice), "private: local speech, nothing leaves this machine for audio"
+        FasterWhisperTranscriber(vc.local_stt_model, vc.local_stt_language or None),
+        SaySpeaker(vc.local_voice, vc.local_voice_hi), "private: local speech, nothing leaves this machine for audio"
     )
     cloud: Engines | None = None
     if not vc.openai_api_key:
@@ -74,10 +81,17 @@ async def _run(verbose: bool) -> int:
                 if memory is not None
                 else []
             )
+            if config.life_enabled:  # the names of people the user has mentioned are vocabulary too
+                people = LifeStore(_memory_dir(config.life_dir))
+                remembered = [*remembered, *[p.name for p in people.people()]]
+                people.close()
             hint = build_hint(vc.assistant_name, vc.stt_hints, remembered)
             cloud = Engines(
                 OpenAITranscriber(vc.openai_api_key, vc.stt_model, prompt=hint, language=vc.language),
-                OpenAISpeaker(vc.openai_api_key, vc.tts_model, vc.tts_voice),
+                OpenAISpeaker(
+                    vc.openai_api_key, vc.tts_model, vc.tts_voice,
+                    **({"instructions": vc.tts_style} if vc.tts_style else {}),
+                ),
                 "cloud: OpenAI speech, audio and spoken replies go to OpenAI",
             )
         reminder_store: ReminderStore | None = None
@@ -122,6 +136,31 @@ async def _run(verbose: bool) -> int:
             if config.lessons_enabled
             else None
         )
+        personality = (
+            PersonalityService(PersonalityStore(_memory_dir(config.personality_dir)), model)
+            if config.humor_enabled
+            else None
+        )
+        life = None
+        if config.life_enabled:
+            life = LifeService(
+                LifeStore(_memory_dir(config.life_dir)), offers=offers, model=model, tz=ZoneInfo(config.reminders_tz),
+                spend=offers.spend_call if offers is not None else None,
+            )
+            if graph is not None:
+                graph.add_listener(life.on_episode)
+        feeds = build_feeds(config, offers, interests, reminder_store, life)
+        hangout = (
+            HangoutService(HttpGroupClient(config.gossip_url), parse_voices(config.hangout_voices))
+            if config.gossip_url
+            else None
+        )
+        safety = SafetyService(
+            _memory_dir(config.safety_dir),
+            start=Mode(config.start_mode),
+            extra_tools=config.limited_tools,
+            duress_phrase=config.duress_phrase,
+        )
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -143,12 +182,26 @@ async def _run(verbose: bool) -> int:
             graph=graph,
             offers=offers,
             lessons=lessons,
+            personality=personality,
+            life=life,
+            feeds=feeds,
+            hangout=hangout,
+            safety=safety,
+            assistant_gender=config.assistant_gender,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
             persona=load_prompt("persona.md").format(name=vc.assistant_name),
             spoken_reasks=True,
         )
+        # Every unprompted or outward-reaching path asks the one mode before it acts.
+        quiet = lambda: not safety.proactive_ok  # noqa: E731
+        if offers is not None:
+            offers.arbiter.set_quiet(quiet)
+        if feeds is not None:
+            feeds.set_quiet(quiet)
+        if idle is not None:
+            idle.set_quiet(quiet)
         count = await orchestrator.start()
         print(f"Connected to the gateway. {count} tools available. I'm {vc.assistant_name}.")
         settings = VoiceSettings(
@@ -160,6 +213,8 @@ async def _run(verbose: bool) -> int:
             wait_notice_delay=vc.wait_notice_delay,
             record_dir=Path(vc.record_dir).expanduser() if vc.record_dir else None,
             barge_in=output_is_headphones() if vc.barge_in == "auto" else vc.barge_in == "on",
+            stream=vc.stream_reply,
+            activation=config.activation,
         )
         session = VoiceSession(
             orchestrator,
@@ -178,10 +233,23 @@ async def _run(verbose: bool) -> int:
         if offers is not None:
             session.attach_offers(offers)
             background_tasks.append(watch_task("offers", offers.start_task()))
+        session.attach_safety(safety)
+        if config.activation == "wake":
+            session.attach_wake(WakeMatcher(config.wake_words))
         if lessons is not None:
             background_tasks.append(watch_task("lessons", lessons.start_task()))
+        if life is not None:
+            background_tasks.append(watch_task("life", life.start_task()))
+        if feeds is not None:
+            background_tasks.append(watch_task("feeds", feeds.start_task()))
         if idle is not None:
             background_tasks.append(watch_task("idle research", idle.start_task()))
+        warm = None
+        if cloud is not None and hasattr(cloud.speaker, "prewarm"):
+            # The "hmm, one sec" fillers are synthesized once now, so they play at once when needed.
+            warm = watch_task(
+                "speaker prewarm", asyncio.create_task(cloud.speaker.prewarm(settings.fillers))
+            )
         if agents is not None:
             orchestrator.set_research_hooks(session.can_start_job, session.adopt_research)
         if reminder_scheduler is not None and reminder_store is not None:
@@ -193,6 +261,8 @@ async def _run(verbose: bool) -> int:
         try:
             await session.run()
         finally:
+            if warm is not None:
+                warm.cancel()
             if reminder_scheduler is not None:
                 await reminder_scheduler.stop()
             await session.close()
@@ -201,6 +271,10 @@ async def _run(verbose: bool) -> int:
                 await interests.stop()
             if lessons is not None:
                 await lessons.stop()
+            if life is not None:
+                await life.stop()
+            if feeds is not None:
+                await feeds.stop()
             if idle is not None:
                 await idle.stop_task()
             if offers is not None:
@@ -223,6 +297,10 @@ async def _run(verbose: bool) -> int:
                 idle.store.close()
             if lessons is not None:
                 lessons.store.close()
+            if personality is not None:
+                personality.store.close()
+            if life is not None:
+                life.store.close()
     finally:
         await gateway.close()
     return 0
