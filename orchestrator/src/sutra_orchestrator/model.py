@@ -275,6 +275,24 @@ STRUCTURED_TOOLS: dict[str, dict[str, Any]] = {
             "required": ["people", "events"],
         },
     },
+    "auth_question": {
+        "name": "record_auth_question",
+        "description": "Record one check question, grounded in a numbered fact.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"fact": {"type": "integer"}, "question": {"type": "string"}, "answer": {"type": "string"}},
+            "required": ["fact", "question", "answer"],
+        },
+    },
+    "auth_judge": {
+        "name": "record_auth_verdict",
+        "description": "Record whether the answer is right.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"verdict": {"type": "string", "enum": ["match", "no_match", "unsure"]}},
+            "required": ["verdict"],
+        },
+    },
     "judgement": {
         "name": "record_judgement",
         "description": "Decide whether to speak up now, and how.",

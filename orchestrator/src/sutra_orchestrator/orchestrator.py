@@ -39,6 +39,8 @@ from .agents import DELEGATE_TOOL, AgentService, Findings
 from .graph import GraphService
 from .interests import InterestService
 from . import translate
+from .auth import AuthService
+from .auth.service import DURESS, FAILED_OUT
 from .feeds import FeedService
 from .hangout import ENTRY, LEFT, UNREACHABLE, WITHHELD, HangoutService, is_start as hangout_start, is_stop as hangout_stop
 from .i18n import detect, localize, reask
@@ -161,6 +163,7 @@ _CANCELLED_NOTE = (
     "[Note: the action that was waiting for the user's confirmation was cancelled. Nothing was done. Do not say it "
     "may have gone through or tell the user to check.]"
 )
+_VERIFY_NOTE = "(I asked them to verify who they are before going further.)"
 HANGOUT_LIMITED_REPLY = "I'm in limited mode, so I can't open the group chat."
 _CHECKIN_NOTE = (
     "You just asked the user: \"{question}\" and they have answered. Respond with real interest in one or two "
@@ -193,6 +196,7 @@ class PendingAction:
 class _Turn:
     tools: list[ToolCallRecord] = field(default_factory=list)
     confirmation: str | None = None
+    auth_reply: str | None = None  # a verification question that ends this turn
 
 
 def _text_msg(role: str, text: str) -> dict[str, Any]:
@@ -224,6 +228,7 @@ class Orchestrator:
         feeds: FeedService | None = None,
         hangout: HangoutService | None = None,
         safety: SafetyService | None = None,
+        auth: AuthService | None = None,
         assistant_gender: str = "feminine",
         max_tool_calls: int = 6,
         history_turns: int = 20,
@@ -250,6 +255,8 @@ class Orchestrator:
         self._interpreting = False
         self._hangout = hangout
         self._safety = safety
+        self._auth = auth
+        self._via = "text"
         self._hangout_on = False
         self._open_offer: OpenOffer | None = None
         self._open_offer_at: datetime | None = None
@@ -333,6 +340,7 @@ class Orchestrator:
             life=self._life,
             feeds=self._feeds,
             safety=self._safety,
+            auth=self._auth,
             max_tool_calls=self._max_tool_calls,
             history_turns=self._history_turns,
             reask_limit=self._reask_limit,
@@ -433,8 +441,10 @@ class Orchestrator:
         addressed_to_assistant: bool = True,
         low_confidence: bool = False,
         on_text: Callable[[str], None] | None = None,
+        via: str = "text",
     ) -> str:
-        """One utterance in, one reply out.
+        """One utterance in, one reply out. ``via`` is how it arrived: "text" (typed) or "voice".
+
 
         ``on_text``, if given, is called with the reply's sentences as the model writes them (a voice
         client speaks them at once). The returned reply is still the whole reply.
@@ -448,10 +458,17 @@ class Orchestrator:
             return ""
 
         self.last_activity = self._now()
+        self._via = via
         if self._safety is not None:
-            early, text = self._safety_gate(text)
+            early, text = await self._safety_gate(text)
             if early is not None:
                 return early  # a mode change or a refusal: nothing else about this turn runs or is kept
+        if self._auth is not None and self._auth.enabled and self._auth.active:
+            checked = await self._auth.answer(text)  # the next message is the answer to the open question
+            if checked is not None:
+                if checked.outcome in (FAILED_OUT, DURESS):
+                    self._drop_for_mode()
+                return checked.text
         if self._personality is not None:
             self._personality.start_reaction(text)  # how did they take the last joke? read beside this turn
         self._lang = detect(text)
@@ -497,7 +514,9 @@ class Orchestrator:
             # Kept apart: nothing from the group chat goes into history, memory, the graph or any later prompt.
             self._history = self._history[-self._history_turns :]
             return reply
-        await self._record(text, reply, turn)
+        await self._record(text, _VERIFY_NOTE if turn.auth_reply is not None else reply, turn)
+        if ordinary and self._auth is not None and not turn.tools and not self._life_turn.private:
+            self._auth.observe(text, self._via, low_confidence)  # a possible source for a later check question
         if ordinary and self._graph is not None:
             self._graph.observe(
                 text, reply, [t.name for t in turn.tools], low_confidence=low_confidence,
@@ -566,7 +585,7 @@ class Orchestrator:
         self._offers.resolve(offer, "declined" if label == DENY else "ignored")
         return None, ""
 
-    def _safety_gate(self, text: str) -> tuple[str | None, str]:
+    async def _safety_gate(self, text: str) -> tuple[str | None, str]:
         """The mode comes first. Returns (reply, text): a reply ends the turn; text may have a private phrase cut out."""
         s = self._safety
         assert s is not None
@@ -574,7 +593,12 @@ class Orchestrator:
         command = s.command(text)
         if command is not None:
             if command.kind == "raise_attempt":
+                if self._auth is not None and self._auth.enabled:
+                    # With the flipper on, a one-time question earns the way back up instead of a pointer to the keyboard.
+                    return (await self._auth.begin("mode")).text, text
                 return (RAISE_REPLY_HI if hi else RAISE_REPLY), text
+            if command.kind == "duress" and self._auth is not None and self._auth.active:
+                return None, text  # the distress phrase as an answer: the check handles it
             if command.target is not None:
                 lowered = s.lower(command.target)
                 if lowered:
@@ -604,6 +628,8 @@ class Orchestrator:
         self._pending = None
         self._interpreting = False
         self._hangout_on = False
+        if self._auth is not None:
+            self._auth.cancel()
         offer, self._open_offer = self._open_offer, None
         if offer is not None and self._offers is not None:
             self._offers.resolve(offer, "ignored")
@@ -899,6 +925,11 @@ class Orchestrator:
                     pending_created = pending_created or created
             msgs.append({"role": "user", "content": results})
 
+            if turn.auth_reply is not None:
+                reply = turn.auth_reply
+                # The question itself is never kept: history and memory only learn that a check was asked for.
+                msgs.append(_text_msg("assistant", _VERIFY_NOTE))
+                break
             if limit_hit:
                 reply = LIMIT_REPLY
                 msgs.append(_text_msg("assistant", reply))
@@ -920,7 +951,7 @@ class Orchestrator:
 
         if humor is not None and not turn.tools:
             self._personality.remember(humor, reply)  # type: ignore[union-attr]
-        if not extra_system:
+        if not extra_system and turn.auth_reply is None:
             reply = await self._append_offer(
                 reply, msgs, followup, pending_created, limit_hit_reply=reply == LIMIT_REPLY
             )
@@ -1170,6 +1201,13 @@ class Orchestrator:
             log.warning("model requested %r, which the current mode does not allow; refused", name)
             turn.tools.append(ToolCallRecord(name, "error"))
             return block("That tool isn't available.", True), False
+        if self._auth is not None and self._auth.protected(name) and not self._auth.has_grant():
+            # A protected action needs a fresh check. The question is fixed text, not the model's, and the
+            # request is not replayed afterwards: the user asks again once verified.
+            if turn.auth_reply is None:
+                turn.auth_reply = (await self._auth.begin("action")).text
+            turn.tools.append(ToolCallRecord(name, "skipped"))
+            return block("The user has to verify who they are first and is being asked a question. Do nothing else.", True), False
 
         started = time.perf_counter()
         result: ToolResult = await self._gateway.call_tool(name, args)

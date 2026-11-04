@@ -27,6 +27,7 @@ from .life import LifeCommands, LifeService, LifeStore
 from .feeds import FeedCommands, build_feeds
 from .hangout import HangoutCommands, HangoutService, HttpGroupClient, parse_voices
 from .safety import Mode, ModeCommands, SafetyService
+from .auth import AuthCommands, build_auth
 from .agents.factory import build_agent_service
 from .reminders import ReminderScheduler, ReminderService, ReminderStore
 from .reminders.commands import ReminderCommands
@@ -147,6 +148,11 @@ async def _run(verbose: bool) -> int:
             duress_phrase=config.duress_phrase,
         )
         mode_commands = ModeCommands(safety)
+        auth = build_auth(
+            config, model, _memory_dir(config.auth_dir), safety, life, reminder_store,
+            spend=offers.spend_call if offers is not None else None,
+        )
+        auth_commands = AuthCommands(auth)
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -159,7 +165,7 @@ async def _run(verbose: bool) -> int:
         commands = CommandSet(
             reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands,
             idle_commands, lesson_commands, humor_commands, life_commands,
-            feed_commands, hangout_commands, mode_commands, memory_commands
+            feed_commands, hangout_commands, mode_commands, auth_commands, memory_commands
         )
         orchestrator = Orchestrator(
             model=model,
@@ -177,6 +183,7 @@ async def _run(verbose: bool) -> int:
             feeds=feeds,
             hangout=hangout,
             safety=safety,
+            auth=auth,
             assistant_gender=config.assistant_gender,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
@@ -289,6 +296,7 @@ async def _run(verbose: bool) -> int:
                 personality.store.close()
             if life is not None:
                 life.store.close()
+            auth.store.close()
     finally:
         await gateway.close()
     return 0

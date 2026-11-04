@@ -28,6 +28,7 @@ from ..life import LifeService, LifeStore
 from ..feeds import build_feeds
 from ..hangout import HangoutService, HttpGroupClient, parse_voices
 from ..safety import Mode, SafetyService
+from ..auth import build_auth
 from .wake import WakeMatcher
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
 from ..repl import configure_logging
@@ -161,6 +162,10 @@ async def _run(verbose: bool) -> int:
             extra_tools=config.limited_tools,
             duress_phrase=config.duress_phrase,
         )
+        auth = build_auth(
+            config, model, _memory_dir(config.auth_dir), safety, life, reminder_store,
+            spend=offers.spend_call if offers is not None else None,
+        )
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -187,6 +192,7 @@ async def _run(verbose: bool) -> int:
             feeds=feeds,
             hangout=hangout,
             safety=safety,
+            auth=auth,
             assistant_gender=config.assistant_gender,
             max_tool_calls=config.max_tool_calls,
             history_turns=config.history_turns,
@@ -233,6 +239,7 @@ async def _run(verbose: bool) -> int:
             session.attach_offers(offers)
             offers.start_task()
         session.attach_safety(safety)
+        session.attach_auth(auth)
         if config.activation == "wake":
             session.attach_wake(WakeMatcher(config.wake_words))
         if lessons is not None:
@@ -298,6 +305,7 @@ async def _run(verbose: bool) -> int:
                 personality.store.close()
             if life is not None:
                 life.store.close()
+            auth.store.close()
     finally:
         await gateway.close()
     return 0

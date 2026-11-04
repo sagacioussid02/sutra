@@ -154,6 +154,7 @@ class VoiceSession:
         self._barge_in = settings.barge_in
         self._safety: SafetyService | None = None
         self._wake = None  # WakeMatcher, attached by the caller
+        self._auth = None  # AuthService, attached by the caller
         self._wake_task: asyncio.Future | None = None
         self._last_cut = False
         self._stt_seconds = 0.0
@@ -172,6 +173,10 @@ class VoiceSession:
         """Let the mode silence the microphone and unprompted speech. Keys can lower or raise it."""
         self._safety = safety
         safety.on_change(lambda mode: self._notify.set())
+
+    def attach_auth(self, auth) -> None:
+        """The authentication flipper can be turned on or off with the `a` key."""
+        self._auth = auth
 
     def attach_wake(self, matcher) -> None:
         """Also listen locally for a wake phrase while idle (audio goes nowhere until it is heard)."""
@@ -281,7 +286,7 @@ class VoiceSession:
         self._out(
             f"Voice is on ({self.engines.label}). Enter = start talking ({how}), "
             "p = switch private/cloud, b = interrupting on/off, q = quit."
-            + (", f/s/m = full/limited/off mode." if self._safety is not None else "")
+            + (", f/s/m = full/limited/off mode, a = authentication on/off." if self._safety is not None else "")
         )
         if self._safety is not None and self._safety.mode is not Mode.FULL:
             self._out(f"  Mode: {self._safety.mode.value} (press f for full).")
@@ -303,6 +308,10 @@ class VoiceSession:
                 continue
             if cmd == "b":
                 self._toggle_barge_in()
+                continue
+            if cmd == "a" and self._auth is not None:
+                self._auth.set_enabled(not self._auth.enabled)  # a key press: only a person at the keyboard can turn it off
+                self._out(f"  Authentication is {'on' if self._auth.enabled else 'off'}.")
                 continue
             if cmd in ("f", "s", "m") and self._safety is not None:
                 # Keys need a person at the keyboard, which is why they may raise the mode as well as lower it.
@@ -600,7 +609,7 @@ class VoiceSession:
         sentences: asyncio.Queue[str] = asyncio.Queue()
         stream = self._s.stream
         extra = {"on_text": sentences.put_nowait} if stream else {}
-        work = asyncio.ensure_future(lane.respond(text, low_confidence=low_confidence, **extra))
+        work = asyncio.ensure_future(lane.respond(text, low_confidence=low_confidence, via="voice", **extra))
         started = loop.time()
         self._first_words_at = None
         timers: list[tuple[float, str]] = []
@@ -730,7 +739,7 @@ class VoiceSession:
 
         task = asyncio.create_task(filler())
         try:
-            return await lane.respond(text, low_confidence=low_confidence)
+            return await lane.respond(text, low_confidence=low_confidence, via="voice")
         finally:
             if started:
                 try:

@@ -50,6 +50,11 @@ class Config:
     offers_calls_per_day: int = 200
     offers_urgent_sources: tuple[str, ...] = ()
     gossip_url: str = ""
+    auth_enabled: bool = False
+    auth_mode_questions: int = 1
+    auth_action_need: int = 2
+    auth_tools: str = ""
+    auth_dir: str = "data"
     start_mode: str = "full"
     limited_tools: tuple[str, ...] = ()
     duress_phrase: str = field(default="", repr=False)  # never shown or logged
@@ -173,6 +178,11 @@ def load_config(
         offers_urgent_sources=tuple(
             t.strip() for t in (merged.get("SUTRA_OFFERS_URGENT_SOURCES") or "").split(",") if t.strip()
         ),
+        auth_enabled=_bool(merged, "SUTRA_AUTH", False),
+        auth_mode_questions=_int(merged, "SUTRA_AUTH_MODE_QUESTIONS", 1),
+        auth_action_need=_int(merged, "SUTRA_AUTH_ACTION_NEED", 2),
+        auth_tools=merged.get("SUTRA_AUTH_TOOLS", ""),
+        auth_dir=merged.get("SUTRA_AUTH_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
         start_mode=_choice(merged, "SUTRA_START_MODE", "full", ("full", "limited", "off")),
         limited_tools=tuple(t.strip() for t in (merged.get("SUTRA_LIMITED_TOOLS") or "").split(",") if t.strip()),
         duress_phrase=_duress(merged),
