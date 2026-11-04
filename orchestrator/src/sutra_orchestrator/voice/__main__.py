@@ -12,7 +12,7 @@ from ..classifier import IntentClassifier
 from ..config import load_config
 from ..errors import OrchestratorError
 from ..gateway import McpGatewaySession
-from ..__main__ import _memory_dir
+from ..__main__ import _memory_dir, watch_task
 from ..memstore import SqliteMemory
 from ..memstore.commands import MemoryCommands  # noqa: F401  (kept for parity with the REPL)
 from ..model import AnthropicModel
@@ -232,28 +232,31 @@ async def _run(verbose: bool) -> int:
                 (lambda entry: reminder_store.mark_seen(entry.id)) if reminder_store else None
             ),
         )
+        background_tasks: list[asyncio.Task[None]] = []
         if interests is not None:
             session.attach_interests(interests)
-            interests.start_task()
+            background_tasks.append(watch_task("interests", interests.start_task()))
         if offers is not None:
             session.attach_offers(offers)
-            offers.start_task()
+            background_tasks.append(watch_task("offers", offers.start_task()))
         session.attach_safety(safety)
         session.attach_auth(auth)
         if config.activation == "wake":
             session.attach_wake(WakeMatcher(config.wake_words))
         if lessons is not None:
-            lessons.start_task()
+            background_tasks.append(watch_task("lessons", lessons.start_task()))
         if life is not None:
-            life.start_task()
+            background_tasks.append(watch_task("life", life.start_task()))
         if feeds is not None:
-            feeds.start_task()
+            background_tasks.append(watch_task("feeds", feeds.start_task()))
         if idle is not None:
-            idle.start_task()
+            background_tasks.append(watch_task("idle research", idle.start_task()))
         warm = None
         if cloud is not None and hasattr(cloud.speaker, "prewarm"):
             # The "hmm, one sec" fillers are synthesized once now, so they play at once when needed.
-            warm = asyncio.create_task(cloud.speaker.prewarm(settings.fillers))
+            warm = watch_task(
+                "speaker prewarm", asyncio.create_task(cloud.speaker.prewarm(settings.fillers))
+            )
         if agents is not None:
             orchestrator.set_research_hooks(session.can_start_job, session.adopt_research)
         if reminder_scheduler is not None and reminder_store is not None:
@@ -261,7 +264,7 @@ async def _run(verbose: bool) -> int:
             # first) are said now, marked late.
             for entry in reminder_store.list_inbox(unseen_only=True):
                 session.deliver_reminder(entry, entry.text, late=True)
-            reminder_scheduler.start_task()
+            background_tasks.append(watch_task("reminders", reminder_scheduler.start_task()))
         try:
             await session.run()
         finally:

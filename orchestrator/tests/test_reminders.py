@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from sutra_orchestrator.__main__ import watch_task
 from sutra_orchestrator.config import load_config
 from sutra_orchestrator.errors import ConfigError
 from sutra_orchestrator.reminders import (
@@ -248,6 +249,114 @@ async def test_scheduler_run_loop_delivers(tmp_path):
         await scheduler.stop()
     assert seen == ["call Sam"]
     store.close()
+
+
+async def test_scheduler_run_loop_survives_a_failed_sweep(tmp_path, monkeypatch):
+    store = make_store(tmp_path)
+    seed(store, NOW - timedelta(seconds=1))
+    seen: list[str] = []
+    scheduler = ReminderScheduler(
+        store, poll_interval=0.01, on_deliver=lambda e: seen.append(e.text), now=Clock()
+    )
+    real_fire_due = scheduler.fire_due
+    sweeps = 0
+
+    def flaky(now=None):
+        nonlocal sweeps
+        sweeps += 1
+        if sweeps == 1:
+            raise RuntimeError("store hiccup")
+        return real_fire_due(now)
+
+    monkeypatch.setattr(scheduler, "fire_due", flaky)
+    scheduler.start_task()
+    try:
+        await asyncio.sleep(0.1)
+    finally:
+        await scheduler.stop()
+    assert sweeps >= 2  # the failed first tick did not end the loop
+    assert seen == ["call Sam"]
+    store.close()
+
+
+async def test_scheduler_run_loop_waits_between_failed_sweeps(tmp_path, monkeypatch):
+    store = make_store(tmp_path)
+    scheduler = ReminderScheduler(store, poll_interval=0.05, now=Clock())
+    sweeps = 0
+
+    def always_broken(now=None):
+        nonlocal sweeps
+        sweeps += 1
+        raise RuntimeError("store is down")
+
+    monkeypatch.setattr(scheduler, "fire_due", always_broken)
+    scheduler.start_task()
+    try:
+        await asyncio.sleep(0.24)
+    finally:
+        await scheduler.stop()
+    # A hot loop would sweep thousands of times in this window; the
+    # guarded loop keeps the poll interval between failures (~5 ticks).
+    assert 2 <= sweeps <= 10
+    store.close()
+
+
+def test_scheduler_one_bad_delivery_does_not_block_the_sweep(tmp_path, monkeypatch):
+    store = make_store(tmp_path)
+    bad = seed(store, NOW, "bad row")
+    seed(store, NOW, "good row")
+    real_deliver = store.deliver
+
+    def flaky_deliver(reminder, delivered_at):
+        if reminder.id == bad.id:
+            raise RuntimeError("inbox insert failed")
+        return real_deliver(reminder, delivered_at)
+
+    monkeypatch.setattr(store, "deliver", flaky_deliver)
+    scheduler = ReminderScheduler(store, now=Clock())
+
+    delivered = scheduler.fire_due(NOW)
+    assert [e.text for e in delivered] == ["good row"]
+    # The bad row's claim was won before its delivery failed, so the
+    # fire is on record: it is never retried (no duplicate later) and
+    # it has no inbox entry. The failure is in the log, not silent.
+    claimed = store.get(bad.id)
+    assert claimed is not None and claimed.status == "fired"
+    assert [e.text for e in store.list_inbox()] == ["good row"]
+    assert scheduler.fire_due(NOW + timedelta(minutes=1)) == []
+    store.close()
+
+
+# ------------------------------------------------------- background watch
+
+
+async def test_watch_task_logs_a_dead_background_task(caplog):
+    async def boom():
+        raise RuntimeError("loop exploded")
+
+    task = watch_task("reminders", asyncio.create_task(boom()))
+    await asyncio.sleep(0.05)
+    assert task.done()
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1
+    assert "reminders" in errors[0].message
+    assert "RuntimeError" in errors[0].message
+
+
+async def test_watch_task_is_quiet_when_a_task_ends_normally_or_is_cancelled(caplog):
+    async def fine():
+        return None
+
+    async def forever():
+        await asyncio.sleep(60)
+
+    done = watch_task("offers", asyncio.create_task(fine()))
+    await done
+    stopped = watch_task("offers", asyncio.create_task(forever()))
+    stopped.cancel()
+    await asyncio.sleep(0.05)
+    assert stopped.cancelled()
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
 
 
 # ------------------------------------------------------------------- commands

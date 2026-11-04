@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -32,6 +33,33 @@ from .agents.factory import build_agent_service
 from .reminders import ReminderScheduler, ReminderService, ReminderStore
 from .reminders.commands import ReminderCommands
 from .repl import CommandSet, configure_logging, run_repl
+
+
+log = logging.getLogger("sutra_orchestrator")
+
+
+def watch_task(name: str, task: asyncio.Task[None]) -> asyncio.Task[None]:
+    """Keep a background task's handle and make its death loud.
+
+    Every background loop is written to survive its own errors, so a
+    task that still ends on one is a real failure — and an invisible
+    one unless something says so: nobody awaits these handles.
+    """
+
+    def died(done: asyncio.Task[None]) -> None:
+        if done.cancelled():
+            return
+        exc = done.exception()
+        if exc is not None:
+            log.error(
+                "background task %s stopped (%s); it will not run again",
+                name,
+                type(exc).__name__,
+                exc_info=exc,
+            )
+
+    task.add_done_callback(died)
+    return task
 
 
 def _memory_dir(configured: str) -> Path:
@@ -239,22 +267,23 @@ async def _run(verbose: bool) -> int:
             print(f"Memory is on ({known} remembered). Type /help for memory commands.")
         else:
             print("Memory is off.")
+        background_tasks: list[asyncio.Task[None]] = []
         if interests is not None:
-            interests.start_task()
+            background_tasks.append(watch_task("interests", interests.start_task()))
         if offers is not None:
-            offers.start_task()
+            background_tasks.append(watch_task("offers", offers.start_task()))
         if lessons is not None:
-            lessons.start_task()
+            background_tasks.append(watch_task("lessons", lessons.start_task()))
         if life is not None:
-            life.start_task()
+            background_tasks.append(watch_task("life", life.start_task()))
         if feeds is not None:
-            feeds.start_task()
+            background_tasks.append(watch_task("feeds", feeds.start_task()))
         if idle is not None:
-            idle.start_task()
+            background_tasks.append(watch_task("idle research", idle.start_task()))
             if idle.enabled:
                 print("Idle research is on: I may look into your interests while you're away.")
         if reminder_scheduler is not None:
-            reminder_scheduler.start_task()
+            background_tasks.append(watch_task("reminders", reminder_scheduler.start_task()))
             print("Reminders are on. Say 'remind me ...', or type /help.")
         try:
             await run_repl(orchestrator, commands=commands if commands._handlers else None)
