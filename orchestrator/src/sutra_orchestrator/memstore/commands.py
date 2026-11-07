@@ -55,7 +55,16 @@ def describe(memory: MemoryRow, now: datetime) -> str:
         tag = f" (replaced by #{memory.superseded_by})" if memory.superseded_by else " (replaced)"
     elif memory.status != "active":
         tag = f" ({memory.status})"
-    return f"#{memory.id} [{memory.kind}, {source}] {memory.content}{tag} - {_age(memory.created_at, now)}"
+    extra = ""
+    if memory.horizon:
+        extra += f" (by: {memory.horizon})"
+    if memory.distilled:
+        extra += (
+            " [pieced together from 1 conversation, thin support]"
+            if memory.support <= 1
+            else f" [pieced together from {memory.support} conversations]"
+        )
+    return f"#{memory.id} [{memory.kind}, {source}] {memory.content}{extra}{tag} - {_age(memory.created_at, now)}"
 
 
 def _describe_episode(episode: EpisodeView) -> list[str]:
@@ -157,6 +166,13 @@ class MemoryCommands:
             return [f"There is no memory #{memory_id}."]
         memory, episode = found
         lines = [describe(memory, self._now())]
+        if memory.distilled:
+            episodes = self._memory.supporting_episodes(memory_id)
+            if not episodes:
+                lines.append("  The conversations it was pieced together from are no longer stored.")
+            for ep in episodes:
+                lines.extend(_describe_episode(ep))
+            return lines
         if memory.episode_id is None:
             lines.append("  You added this directly with /remember.")
         elif episode is None:
@@ -168,13 +184,17 @@ class MemoryCommands:
         return lines
 
     async def _proposals(self, rest, read) -> list[str]:
-        proposals = self._memory.proposals()
+        proposals = sorted(self._memory.proposals(), key=lambda p: p.kind != "commitment")  # what you owe comes first
         if not proposals:
             return ["No proposals waiting."]
         lines: list[str] = []
         now = self._now()
         for p in proposals:
             lines.append(describe(p, now))
+            if p.distilled and p.replaces:
+                old = self._memory.get_memory(p.replaces)
+                if old is not None and old.status == "active":
+                    lines.append(f"  Approving replaces #{old.id} ({_SOURCES.get(old.source, old.source)}): {old.content}")
             if p.tool_context:
                 lines.append("  Heads up: suggested while reading tool results. Check it first.")
             lines.append(f"  /approve {p.id}   or   /reject {p.id}")

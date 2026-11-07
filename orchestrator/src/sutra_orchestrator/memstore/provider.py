@@ -61,6 +61,10 @@ class MemoryRow:
     superseded_by: int | None
     created_at: datetime
     last_used_at: datetime | None
+    distilled: bool = False
+    horizon: str | None = None
+    replaces: int | None = None
+    support: int = 1
 
     @property
     def shown_as_fact(self) -> bool:
@@ -107,6 +111,10 @@ def _row(r: sqlite3.Row) -> MemoryRow:
         superseded_by=r["superseded_by"],
         created_at=datetime.fromisoformat(r["created_at"]),
         last_used_at=_parse(r["last_used_at"]),
+        distilled=bool(r["distilled"]),
+        horizon=r["horizon"],
+        replaces=r["replaces"],
+        support=r["support"],
     )
 
 
@@ -238,7 +246,7 @@ class SqliteMemory:
         return [
             MemoryItem(
                 id=str(m.id),
-                content=m.content[: self._char_budget],
+                content=(m.content + (f" (horizon: {m.horizon})" if m.horizon else ""))[: self._char_budget],
                 source=SOURCE_USER_STATED if m.source == "user_stated" else SOURCE_USER_APPROVED,
                 created_at=m.created_at,
             )
@@ -452,9 +460,15 @@ class SqliteMemory:
         row = self._get(memory_id)
         if row is None or row.status != "proposed":
             return None
-        replaced = self._similar(
-            row.content, [r for r in self._fetch(("active",)) if r.id != memory_id], row.kind
-        )
+        if row.distilled:
+            # A distilled candidate replaces only the one memory it was marked as replacing, and only
+            # because the user is approving that pairing. Unmarked candidates never supersede anything.
+            target = self._get(row.replaces) if row.replaces else None
+            replaced = [target] if target is not None and target.status == "active" and target.id != memory_id else []
+        else:
+            replaced = self._similar(
+                row.content, [r for r in self._fetch(("active",)) if r.id != memory_id], row.kind
+            )
         with self._conn:
             self._conn.execute(
                 "UPDATE memories SET status = 'active', approved_by_user = 1 WHERE id = ?",
@@ -543,6 +557,104 @@ class SqliteMemory:
             return row, (_episode(found, archived=True) if found else None)
         finally:
             archive.close()
+
+    def supporting_episodes(self, memory_id: int) -> list[EpisodeView]:
+        """Every episode that supports a distilled memory, oldest first (archive included)."""
+        ids = [
+            r["episode_id"]
+            for r in self._conn.execute("SELECT episode_id FROM memory_episodes WHERE memory_id = ?", (memory_id,))
+        ]
+        out: list[EpisodeView] = []
+        archive = open_archive(self._dir / ARCHIVE_DB) if (self._dir / ARCHIVE_DB).exists() else None
+        try:
+            for eid in ids:
+                found = self._conn.execute("SELECT * FROM episodes WHERE id = ?", (eid,)).fetchone()
+                if found:
+                    out.append(_episode(found, archived=False))
+                elif archive is not None:
+                    found = archive.execute("SELECT * FROM episodes WHERE id = ?", (eid,)).fetchone()
+                    if found:
+                        out.append(_episode(found, archived=True))
+        finally:
+            if archive is not None:
+                archive.close()
+        return sorted(out, key=lambda e: e.ts)
+
+    # ------------------------------------------------------------ distillation
+
+    def get_meta(self, key: str) -> str | None:
+        row = self._conn.execute("SELECT value FROM distill_meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO distill_meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    def latest_episode_mark(self) -> tuple[str, str] | None:
+        """(ts, id) of the newest hot episode: where a first run starts from."""
+        r = self._conn.execute("SELECT ts, id FROM episodes ORDER BY ts DESC, id DESC LIMIT 1").fetchone()
+        return (r["ts"], r["id"]) if r else None
+
+    def episodes_after(self, mark: tuple[str, str], limit: int) -> list[tuple[str, str, str, list[dict[str, str]], str | None]]:
+        """Hot episodes after the watermark, oldest first, as (id, ts, utterance, tools, confirmation).
+
+        Replies are never returned: the pass reads what the user said, which tools ran and how they ended.
+        """
+        rows = self._conn.execute(
+            "SELECT id, ts, utterance, tools, confirmation FROM episodes "
+            "WHERE ts > ? OR (ts = ? AND id > ?) ORDER BY ts, id LIMIT ?",
+            (mark[0], mark[0], mark[1], limit),
+        ).fetchall()
+        return [(r["id"], r["ts"], r["utterance"], json.loads(r["tools"]), r["confirmation"]) for r in rows]
+
+    def rejected_contents(self, limit: int = 40) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT content FROM memories WHERE status = 'rejected' ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [r["content"] for r in rows]
+
+    def active_for_distill(self, limit: int = 60) -> list[MemoryRow]:
+        return self._fetch(("active",))[-limit:]
+
+    def add_distilled(
+        self,
+        content: str,
+        kind: str,
+        episode_ids: list[str],
+        *,
+        horizon: str | None = None,
+        replaces: int | None = None,
+    ) -> int | None:
+        """Store a candidate as a proposal. None if it duplicates something live or already rejected."""
+        known = self._fetch(("active", "proposed", "rejected"))
+        norm = normalize(content)
+        # An exact repeat of anything is dropped, and a near-repeat of something declined or already waiting.
+        # A near-repeat of an active memory is kept: it may be a change ("works at Beta" vs "works at Acme"),
+        # which the user decides on when approving.
+        if any(
+            normalize(r.content) == norm
+            or (r.status != "active" and overlap(content, r.content) >= self._threshold)
+            for r in known
+        ):
+            return None
+        now = _iso(self._now())
+        with self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO memories (kind, source, status, content, episode_id, created_at, "
+                "distilled, horizon, replaces, support) VALUES (?, 'inferred', 'proposed', ?, ?, ?, 1, ?, ?, ?)",
+                (kind, content, episode_ids[-1] if episode_ids else None, now, horizon, replaces, len(episode_ids)),
+            )
+            new_id = cursor.lastrowid
+            self._conn.execute("INSERT INTO memories_fts (rowid, content) VALUES (?, ?)", (new_id, content))
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO memory_episodes (memory_id, episode_id) VALUES (?, ?)",
+                [(new_id, e) for e in episode_ids],
+            )
+        return new_id
 
     # ---------------------------------------------------------------- archive
 

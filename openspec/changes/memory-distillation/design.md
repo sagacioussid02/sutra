@@ -95,6 +95,20 @@ off — in that configuration it works from utterances alone, and the
 design accepts the thinner signal rather than weakening the recording
 choice.
 
+### What changed during implementation
+- The memory database moves to schema version 2 (a rebuild of `memories` to allow the
+  `commitment` kind, plus `distilled`, `horizon`, `replaces` and `support` columns, a
+  `memory_episodes` provenance table and `distill_meta` for the watermark). A private
+  `memory.db.v1.bak` copy is made first. Older code refuses the new file, as before.
+- The pass never reads reply text at all, whether or not replies are recorded.
+  Conversations that used a `finanxe_` tool are never sent to the model.
+- Near-repeats of something declined or already waiting are dropped; a near-repeat of an
+  *active* memory is kept, because it may be a change ("works at Beta" vs "Acme"), which the
+  user decides on at approval.
+- It is off by default (`SUTRA_DISTILL`), and the first pass starts from now.
+- The digest is one spoken notice per productive pass, through the offers system, pointing at
+  `/proposals`. There is no spoken approval path yet: approving is done in text.
+
 ## Risks / Trade-offs
 
 - [A distilled "fact" is a plausible hallucination] → proposals only,

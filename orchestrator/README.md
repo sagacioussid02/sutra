@@ -656,3 +656,16 @@ Before each reply Sutra adds a short "what is true right now" block, so it stops
 **Staleness:** the calendar is re-read after `SUTRA_WORLDSTATE_CALENDAR_TTL` minutes, and any line older than its limit is marked STALE with its age. A source that errors or takes longer than `SUTRA_WORLDSTATE_TIMEOUT` seconds leaves its line out and the block says it was not observed. The calendar read follows the current mode and authentication like any other tool call.
 
 **Control:** `/state` shows the snapshot exactly as replies see it; `/state off` stops using it. `SUTRA_WORLDSTATE=off` disables it. The offers judge sees the same block.
+
+
+## Memory distillation
+
+Memory remembers what you said one sentence at a time. Distillation looks across recent conversations and proposes the things no single sentence says: a preference you showed three times, a change of job, and above all **commitments** (what you owe, are owed, or are waiting on, with the due date only if you stated one).
+
+**Turn it on** (off by default, because it sends your own recent words to the model): `SUTRA_DISTILL=on`. The first pass starts from now, so enabling it does not dredge up old conversations; `/distill backfill` is the one-time opt-in to read the oldest recent ones.
+
+**What it reads:** what you said, the names of tools that ran and how they ended, and confirmation outcomes. **What it never reads:** replies, tool results, or any conversation where a finance tool ran. It also drops anything that looks like an amount, a balance or a password.
+
+**What comes out:** proposals only, in `/proposals`, commitments first. Each shows how many conversations it was pieced together from (one is marked thin support), and `/why <id>` shows every one of them. Nothing is recalled until you `/approve` it. If a proposal contradicts something you already have, `/proposals` shows the pair; approving replaces the old memory (kept, listed as replaced), rejecting changes nothing. A rejected proposal is not suggested again.
+
+**Schedule and cost:** about once a day while you are away, at most `SUTRA_DISTILL_CALLS` model calls a day; a backlog drains over several passes. `/distill` shows the last pass and where it got to, `/distill run` does one now, `/distill off` stops the schedule. After one productive pass you get a single notice, not one per item.

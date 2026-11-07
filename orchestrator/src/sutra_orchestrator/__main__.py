@@ -20,6 +20,7 @@ from .orchestrator import Orchestrator
 from .agents import AgentCommands
 from .interests import InterestCommands, InterestService, InterestStore, Reflector
 from .graph import GraphCommands
+from .distill import DistillCommands, build_distill
 from .events import EventsCommands, build_events
 from .worldstate import StateCommands, build_worldstate
 from .offers import OffersCommands, build_graph_and_offers
@@ -193,13 +194,19 @@ async def _run(verbose: bool) -> int:
             last_activity=lambda: orchestrator.last_activity,
             busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks),
         )
+        distill = build_distill(
+            config, model, memory, offers,
+            last_activity=lambda: orchestrator.last_activity,
+            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks),
+        )
+        distill_commands = DistillCommands(distill) if distill is not None else None
         idle_commands = IdleCommands(idle) if idle is not None else None
         # Reminder commands first: the memory handler answers every "/"
         # line (including "unknown command"), so it must be tried last.
         commands = CommandSet(
             reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands, events_commands,
             idle_commands, lesson_commands, humor_commands, life_commands,
-            feed_commands, hangout_commands, mode_commands, auth_commands, memory_commands
+            feed_commands, hangout_commands, mode_commands, auth_commands, distill_commands, memory_commands
         )
         orchestrator = Orchestrator(
             model=model,
@@ -297,6 +304,8 @@ async def _run(verbose: bool) -> int:
             await event_listener.start()
             background_tasks.append(watch_task("events", events.start_task()))
             print(f"Events are on: listening on 127.0.0.1:{event_listener.port} for the gateway.")
+        if distill is not None:
+            background_tasks.append(watch_task("distill", distill.start_task()))
         if lessons is not None:
             background_tasks.append(watch_task("lessons", lessons.start_task()))
         if life is not None:
@@ -320,6 +329,8 @@ async def _run(verbose: bool) -> int:
                 await interests.stop()
             if lessons is not None:
                 await lessons.stop()
+            if distill is not None:
+                await distill.stop()
             if life is not None:
                 await life.stop()
             if feeds is not None:

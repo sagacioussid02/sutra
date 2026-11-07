@@ -232,6 +232,30 @@ STRUCTURED_TOOLS: dict[str, dict[str, Any]] = {
             "required": ["items"],
         },
     },
+    "distill_candidates": {
+        "name": "record_candidates",
+        "description": "Record facts, preferences and commitments the episodes support, possibly none.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "statement": {"type": "string"},
+                            "kind": {"type": "string", "enum": ["fact", "preference", "commitment"]},
+                            "horizon": {"type": "string"},
+                            "evidence": {"type": "array", "items": {"type": "integer"}},
+                            "replaces": {"type": "integer"},
+                        },
+                        "required": ["statement", "kind", "evidence"],
+                    },
+                }
+            },
+            "required": ["items"],
+        },
+    },
     "humor_reaction": {
         "name": "record_humor",
         "description": "Record whether the assistant joked and how the person reacted.",
