@@ -49,6 +49,13 @@ class Config:
     offers_daily_max: int = 4
     offers_calls_per_day: int = 200
     offers_urgent_sources: tuple[str, ...] = ()
+    events_enabled: bool = False
+    events_dir: str = "data"
+    events_port: int = 8766
+    events_secret: str = ""
+    events_cap: int = 5000
+    events_retention_days: int = 30
+    events_max_attempts: int = 3
     gossip_url: str = ""
     auth_enabled: bool = False
     auth_mode_questions: int = 1
@@ -178,6 +185,13 @@ def load_config(
         offers_urgent_sources=tuple(
             t.strip() for t in (merged.get("SUTRA_OFFERS_URGENT_SOURCES") or "").split(",") if t.strip()
         ),
+        events_enabled=_bool(merged, "SUTRA_EVENTS", False),
+        events_dir=merged.get("SUTRA_EVENTS_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
+        events_port=_int(merged, "SUTRA_EVENTS_PORT", 8766),
+        events_secret=merged.get("SUTRA_EVENTS_SECRET") or "",
+        events_cap=_int(merged, "SUTRA_EVENTS_CAP", 5000),
+        events_retention_days=_int(merged, "SUTRA_EVENTS_RETENTION_DAYS", 30),
+        events_max_attempts=_int(merged, "SUTRA_EVENTS_MAX_ATTEMPTS", 3),
         auth_enabled=_bool(merged, "SUTRA_AUTH", False),
         auth_mode_questions=_int(merged, "SUTRA_AUTH_MODE_QUESTIONS", 1),
         auth_action_need=_int(merged, "SUTRA_AUTH_ACTION_NEED", 2),

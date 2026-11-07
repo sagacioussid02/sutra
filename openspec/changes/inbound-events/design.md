@@ -50,6 +50,13 @@ across the boundary.
 the orchestrator watches. Rejected: no auth, no audit, and every producer
 re-implements the envelope.
 
+### The orchestrator listens on loopback
+The orchestrator had no inbound endpoint, so it gains a small stdlib listener
+bound to `127.0.0.1` that accepts one route, `POST /events`, only with a shared
+secret the gateway sends (`SUTRA_EVENTS_SECRET`; no secret configured means no
+intake). It re-validates every envelope: the orchestrator does not trust the
+wire. It is off unless `SUTRA_EVENTS` is on.
+
 ### Envelope, not free-form payloads
 Kinds are declared in one registry module with a payload schema (field
 names, types, size bound). Unknown kinds and oversize or malformed
@@ -114,6 +121,10 @@ audit entry. A misbehaving producer degrades itself, not the assistant.
   memories remain the durable record.
 
 ## Migration Plan
+
+In-process producers (weather and news feeds, idle research, life follow-ups,
+lessons) are trusted code and keep calling `add_signal` directly; the shim
+covers the development `/offers signal` command and any external producer.
 
 The offers signal intake keeps its existing producer-facing shape behind
 a shim that translates to envelopes of the corresponding kinds, so

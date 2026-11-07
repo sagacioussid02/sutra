@@ -1,0 +1,42 @@
+{
+  "weather_warning": {
+    "default_expiry_minutes": 360,
+    "fields": {
+      "summary": {"required": true, "max": 200},
+      "urgency": {"enum": ["low", "medium", "high"]},
+      "ref": {"max": 120}
+    }
+  },
+  "calendar_change": {
+    "default_expiry_minutes": 1440,
+    "fields": {
+      "summary": {"required": true, "max": 200},
+      "urgency": {"enum": ["low", "medium", "high"]},
+      "ref": {"max": 120}
+    }
+  },
+  "camera_motion": {
+    "default_expiry_minutes": 30,
+    "fields": {
+      "summary": {"required": true, "max": 200},
+      "urgency": {"enum": ["low", "medium", "high"]},
+      "ref": {"max": 120}
+    }
+  },
+  "broker_fill": {
+    "default_expiry_minutes": 120,
+    "fields": {
+      "summary": {"required": true, "max": 200},
+      "urgency": {"enum": ["low", "medium", "high"]},
+      "ref": {"max": 120}
+    }
+  },
+  "phone_notification": {
+    "default_expiry_minutes": 240,
+    "fields": {
+      "summary": {"required": true, "max": 200},
+      "urgency": {"enum": ["low", "medium", "high"]},
+      "ref": {"max": 120}
+    }
+  }
+}

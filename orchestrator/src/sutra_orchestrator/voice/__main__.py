@@ -20,6 +20,7 @@ from ..orchestrator import Orchestrator
 from ..prompts import load_prompt
 from ..agents.factory import build_agent_service
 from ..interests import InterestService, InterestStore, Reflector
+from ..events import build_events
 from ..offers import build_graph_and_offers
 from ..idle import build_idle
 from ..lessons import build_lessons
@@ -126,6 +127,9 @@ async def _run(verbose: bool) -> int:
                 nudge_hours=config.nudge_hours,
             )
         graph, offers = build_graph_and_offers(config, model, _memory_dir)
+        built_events = build_events(config, offers, _memory_dir)
+        events = built_events[0] if built_events else None
+        event_listener = built_events[1] if built_events else None
         agents = None
         if config.agents_enabled:
             agents = build_agent_service(
@@ -239,6 +243,9 @@ async def _run(verbose: bool) -> int:
         if offers is not None:
             session.attach_offers(offers)
             background_tasks.append(watch_task("offers", offers.start_task()))
+        if events is not None:
+            await event_listener.start()
+            background_tasks.append(watch_task("events", events.start_task()))
         session.attach_safety(safety)
         session.attach_auth(auth)
         if config.activation == "wake":
@@ -284,6 +291,9 @@ async def _run(verbose: bool) -> int:
                 await feeds.stop()
             if idle is not None:
                 await idle.stop_task()
+            if events is not None:
+                await event_listener.stop()
+                await events.stop_task()
             if offers is not None:
                 await offers.stop_task()
             await orchestrator.flush()
@@ -298,6 +308,8 @@ async def _run(verbose: bool) -> int:
                 interests.store.close()
             if graph is not None:
                 graph.store.close()
+            if events is not None:
+                events.store.close()
             if offers is not None:
                 offers.store.close()
             if idle is not None:

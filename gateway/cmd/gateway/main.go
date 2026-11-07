@@ -21,6 +21,7 @@ import (
 	"github.com/siddharthshankar/sutra/gateway/internal/confirm"
 	"github.com/siddharthshankar/sutra/gateway/internal/discovery"
 	"github.com/siddharthshankar/sutra/gateway/internal/discoverysrc"
+	"github.com/siddharthshankar/sutra/gateway/internal/events"
 	"github.com/siddharthshankar/sutra/gateway/internal/finanxe"
 	"github.com/siddharthshankar/sutra/gateway/internal/gateway"
 	"github.com/siddharthshankar/sutra/gateway/internal/genericadapter"
@@ -52,6 +53,7 @@ func main() {
 	finanxeUserID := flag.String("finanxe-user-id", "demo_user", "the finanxe user id every gateway caller maps to (finanxe has no real multi-user support today)")
 	discoveryDBPath := flag.String("discovery-db", "sutra-discovery.db", "path to the discovery approval SQLite database")
 	discoverySourcesPath := flag.String("discovery-sources", "discovery-sources.yaml", "path to the discovery sources config (optional — see discovery-sources.example.yaml)")
+	eventsPath := flag.String("events", "events.yaml", "path to the gitignored event-producer config (optional — see events.example.yaml); without it the event intake is off")
 	flag.Parse()
 
 	authConfig, err := authcfg.Load(*tokensPath)
@@ -108,7 +110,7 @@ func main() {
 		Confirm:  confirmStore,
 		Audit:    auditStore,
 	})
-	handler := gateway.NewHTTPHandler(server, authConfig)
+	handler := withEventIntake(gateway.NewHTTPHandler(server, authConfig), *eventsPath, auditStore)
 
 	log.SetOutput(os.Stderr)
 	log.Printf("sutra gateway listening on http://%s (tools registered: %d)", *addr, len(reg.Callable()))
@@ -144,4 +146,26 @@ func registerDiscoveredTools(reg *registry.Registry, store *discovery.Store, sou
 		registered, skipped := genericadapter.RegisterApproved(reg, src.Name, client, m.Tools, approvals)
 		log.Printf("gateway: discovery: %s: registered %d discovered tool(s) (%d skipped)", src.Name, registered, skipped)
 	}
+}
+
+// withEventIntake mounts POST /events beside the MCP handler when event
+// producers are configured. Producers authenticate with their own tokens, not
+// the user tokens; without events.yaml the route does not exist.
+func withEventIntake(mcpHandler http.Handler, path string, a events.Auditor) http.Handler {
+	cfg, err := events.LoadConfig(path)
+	if err != nil {
+		log.Fatalf("gateway: %v", err)
+	}
+	if len(cfg.Producers) == 0 {
+		return mcpHandler
+	}
+	intake, err := events.NewHandler(cfg, a)
+	if err != nil {
+		log.Fatalf("gateway: %v", err)
+	}
+	log.Printf("gateway: event intake on /events (%d producers)", len(cfg.Producers))
+	mux := http.NewServeMux()
+	mux.Handle("/events", intake)
+	mux.Handle("/", mcpHandler)
+	return mux
 }
