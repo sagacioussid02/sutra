@@ -49,6 +49,9 @@ class Config:
     offers_daily_max: int = 4
     offers_calls_per_day: int = 200
     offers_urgent_sources: tuple[str, ...] = ()
+    distill_enabled: bool = False
+    distill_hours: float = 24.0
+    distill_calls: int = 3
     worldstate_enabled: bool = True
     worldstate_timeout: float = 2.0
     worldstate_chars: int = 700
@@ -190,6 +193,9 @@ def load_config(
         offers_urgent_sources=tuple(
             t.strip() for t in (merged.get("SUTRA_OFFERS_URGENT_SOURCES") or "").split(",") if t.strip()
         ),
+        distill_enabled=_bool(merged, "SUTRA_DISTILL", False),
+        distill_hours=float(merged.get("SUTRA_DISTILL_HOURS") or 24.0),
+        distill_calls=_int(merged, "SUTRA_DISTILL_CALLS", 3),
         worldstate_enabled=_bool(merged, "SUTRA_WORLDSTATE", True),
         worldstate_timeout=float(merged.get("SUTRA_WORLDSTATE_TIMEOUT") or 2.0),
         worldstate_chars=_int(merged, "SUTRA_WORLDSTATE_CHARS", 700),

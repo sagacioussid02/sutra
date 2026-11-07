@@ -20,6 +20,7 @@ from ..orchestrator import Orchestrator
 from ..prompts import load_prompt
 from ..agents.factory import build_agent_service
 from ..interests import InterestService, InterestStore, Reflector
+from ..distill import build_distill
 from ..events import build_events
 from ..worldstate import build_worldstate
 from ..offers import build_graph_and_offers
@@ -171,6 +172,11 @@ async def _run(verbose: bool) -> int:
             config, model, _memory_dir(config.auth_dir), safety, life, reminder_store,
             spend=offers.spend_call if offers is not None else None,
         )
+        distill = build_distill(
+            config, model, memory, offers,
+            last_activity=lambda: orchestrator.last_activity,
+            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks),
+        )
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
@@ -265,6 +271,8 @@ async def _run(verbose: bool) -> int:
         session.attach_auth(auth)
         if config.activation == "wake":
             session.attach_wake(WakeMatcher(config.wake_words))
+        if distill is not None:
+            background_tasks.append(watch_task("distill", distill.start_task()))
         if lessons is not None:
             background_tasks.append(watch_task("lessons", lessons.start_task()))
         if life is not None:
@@ -300,6 +308,8 @@ async def _run(verbose: bool) -> int:
                 await interests.stop()
             if lessons is not None:
                 await lessons.stop()
+            if distill is not None:
+                await distill.stop()
             if life is not None:
                 await life.stop()
             if feeds is not None:
