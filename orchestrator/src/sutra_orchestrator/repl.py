@@ -52,6 +52,10 @@ class CommandSet:
     def __init__(self, *handlers) -> None:
         self._handlers = [h for h in handlers if h is not None]
 
+    def insert_before_last(self, handler) -> None:
+        """Add a handler late, ahead of the catch-all that answers every unknown ``/`` line."""
+        self._handlers.insert(max(0, len(self._handlers) - 1), handler)
+
     async def handle(
         self, line: str, read: Callable[[str], Awaitable[str]]
     ) -> list[str] | None:

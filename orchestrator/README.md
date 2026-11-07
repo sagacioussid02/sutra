@@ -637,3 +637,22 @@ Kinds are `weather_warning`, `calendar_change`, `camera_motion`, `broker_fill` a
 **Control:** `/events` shows recent events, per-source counts and delivery state; `/events off` stops intake and delivery. `/offers signal weather 30 Snow tonight` now goes through the same log as source `manual`.
 
 **Writing a producer:** it is a script that makes the POST above; keep large content with the producer and send a reference in `ref`.
+
+
+## World state
+
+Before each reply Sutra adds a short "what is true right now" block, so it stops answering from stale memory. Every line shows its age:
+
+```
+- Where they are (3 min old): home
+- Coming up (just now): today: Rent due
+- Open (just now): reminders: stretch at Sat 16:27, 1 offer not yet answered
+```
+
+**What it contains:** a presence hint you set (`/state presence home|out|busy|do-not-disturb`); the next few days from the finanxe calendar; open commitments (an action waiting for yes/no, unanswered offers, active reminders, things left open in conversation); fresh inbound events, quoted only inside an untrusted label; and a pointer saying when the finance snapshot was last read.
+
+**What it never contains:** financial figures (ask for them fresh), anything from memory used to fill a gap, or anything written to disk. It is built on demand and kept in memory only.
+
+**Staleness:** the calendar is re-read after `SUTRA_WORLDSTATE_CALENDAR_TTL` minutes, and any line older than its limit is marked STALE with its age. A source that errors or takes longer than `SUTRA_WORLDSTATE_TIMEOUT` seconds leaves its line out and the block says it was not observed. The calendar read follows the current mode and authentication like any other tool call.
+
+**Control:** `/state` shows the snapshot exactly as replies see it; `/state off` stops using it. `SUTRA_WORLDSTATE=off` disables it. The offers judge sees the same block.

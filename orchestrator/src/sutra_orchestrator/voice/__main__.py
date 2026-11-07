@@ -21,6 +21,7 @@ from ..prompts import load_prompt
 from ..agents.factory import build_agent_service
 from ..interests import InterestService, InterestStore, Reflector
 from ..events import build_events
+from ..worldstate import build_worldstate
 from ..offers import build_graph_and_offers
 from ..idle import build_idle
 from ..lessons import build_lessons
@@ -204,6 +205,20 @@ async def _run(verbose: bool) -> int:
             persona=load_prompt("persona.md").format(name=vc.assistant_name),
             spoken_reasks=True,
         )
+        built_world = build_worldstate(
+            config,
+            call_tool=gateway.call_tool,
+            permitted=lambda name: name in orchestrator.gateway_tools
+            and orchestrator._may_use(name, local=False)
+            and not (auth is not None and auth.protected(name) and not auth.has_grant()),
+            pending=lambda: orchestrator.pending,
+            offers=offers, reminders=reminder_store, graph=graph, events=events,
+        )
+        world, presence = (built_world[0], built_world[1]) if built_world else (None, None)
+        if built_world:
+            orchestrator.attach_world(world, built_world[2])
+            if offers is not None:
+                offers.attach_world(world)
         # Every unprompted or outward-reaching path asks the one mode before it acts.
         quiet = lambda: not safety.proactive_ok  # noqa: E731
         if offers is not None:
