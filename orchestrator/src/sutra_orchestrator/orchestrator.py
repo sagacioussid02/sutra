@@ -256,6 +256,8 @@ class Orchestrator:
         self._hangout = hangout
         self._safety = safety
         self._auth = auth
+        self._world = None  # WorldState, attached after construction
+        self._world_seen = None
         self._via = "text"
         self._hangout_on = False
         self._open_offer: OpenOffer | None = None
@@ -316,6 +318,10 @@ class Orchestrator:
             self._offers.resolve(offer, "ignored")  # asked, and the user left without answering
         if self._graph is not None:
             self._graph.close_episode()
+
+    def attach_world(self, world, seen) -> None:
+        """Late wiring: the world-state provider reads this orchestrator's pending action and tools."""
+        self._world, self._world_seen = world, seen
 
     @property
     def pending(self) -> PendingAction | None:
@@ -857,6 +863,10 @@ class Orchestrator:
                 system += "\n\n" + interests_block
             if self._interests.nudged and self._offers is not None:
                 self._offers.note_nudge()
+        if self._world is not None:
+            world_block = await self._world.block(turn)  # stamped with ages; stale marked, missing never guessed
+            if world_block:
+                system += "\n\n" + world_block
         if self._lessons is not None:
             lessons_block = self._lessons.block()  # active lessons only; data, not authority
             if lessons_block:
@@ -1250,6 +1260,8 @@ class Orchestrator:
             return block(message, True), False
 
         turn.tools.append(ToolCallRecord(name, "ok"))
+        if self._world_seen is not None:
+            self._world_seen.note(name)
         return block(result.text), False
 
     # ------------------------------------------------------------------ helpers

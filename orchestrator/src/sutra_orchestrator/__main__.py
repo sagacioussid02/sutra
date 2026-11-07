@@ -21,6 +21,7 @@ from .agents import AgentCommands
 from .interests import InterestCommands, InterestService, InterestStore, Reflector
 from .graph import GraphCommands
 from .events import EventsCommands, build_events
+from .worldstate import StateCommands, build_worldstate
 from .offers import OffersCommands, build_graph_and_offers
 from .idle import IdleCommands, build_idle
 from .lessons import LessonCommands, build_lessons
@@ -222,6 +223,21 @@ async def _run(verbose: bool) -> int:
             history_turns=config.history_turns,
             reask_limit=config.reask_limit,
         )
+        built_world = build_worldstate(
+            config,
+            call_tool=gateway.call_tool,
+            permitted=lambda name: name in orchestrator.gateway_tools
+            and orchestrator._may_use(name, local=False)
+            and not (auth is not None and auth.protected(name) and not auth.has_grant()),
+            pending=lambda: orchestrator.pending,
+            offers=offers, reminders=reminder_store, graph=graph, events=events,
+        )
+        world, presence = (built_world[0], built_world[1]) if built_world else (None, None)
+        if built_world:
+            orchestrator.attach_world(world, built_world[2])
+            commands.insert_before_last(StateCommands(world, presence))
+            if offers is not None:
+                offers.attach_world(world)
         if agents is not None:
             def adopt(label: str, task: str, work) -> None:
                 def done(t) -> None:

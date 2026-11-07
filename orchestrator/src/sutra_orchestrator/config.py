@@ -49,6 +49,11 @@ class Config:
     offers_daily_max: int = 4
     offers_calls_per_day: int = 200
     offers_urgent_sources: tuple[str, ...] = ()
+    worldstate_enabled: bool = True
+    worldstate_timeout: float = 2.0
+    worldstate_chars: int = 700
+    worldstate_calendar_ttl: int = 5
+    worldstate_finance_ttl: int = 15
     events_enabled: bool = False
     events_dir: str = "data"
     events_port: int = 8766
@@ -185,6 +190,11 @@ def load_config(
         offers_urgent_sources=tuple(
             t.strip() for t in (merged.get("SUTRA_OFFERS_URGENT_SOURCES") or "").split(",") if t.strip()
         ),
+        worldstate_enabled=_bool(merged, "SUTRA_WORLDSTATE", True),
+        worldstate_timeout=float(merged.get("SUTRA_WORLDSTATE_TIMEOUT") or 2.0),
+        worldstate_chars=_int(merged, "SUTRA_WORLDSTATE_CHARS", 700),
+        worldstate_calendar_ttl=_int(merged, "SUTRA_WORLDSTATE_CALENDAR_TTL", 5),
+        worldstate_finance_ttl=_int(merged, "SUTRA_WORLDSTATE_FINANCE_TTL", 15),
         events_enabled=_bool(merged, "SUTRA_EVENTS", False),
         events_dir=merged.get("SUTRA_EVENTS_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
         events_port=_int(merged, "SUTRA_EVENTS_PORT", 8766),

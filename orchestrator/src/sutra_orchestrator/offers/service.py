@@ -112,11 +112,15 @@ class OffersService:
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
+        self._world = None  # WorldState: what is open and true right now, for the judge
 
     def attach(self, graph: GraphService | None, judge: Judge | None) -> None:
         """Late wiring: the graph and the judge both spend this service's call budget."""
         self._graph = graph
         self._judge = judge
+
+    def attach_world(self, world) -> None:
+        self._world = world
 
     @property
     def store(self) -> OffersStore:
@@ -321,6 +325,10 @@ class OffersService:
             )
         else:
             context = "Nothing the person has said or approved seems to connect to this."
+        if self._world is not None:
+            now_block = await self._world.block()
+            if now_block:
+                context += "\n\n" + now_block  # open commitments and presence: one offer should not pile on another
         judgement = await self._judge.judge(
             kind="timely",
             topic=sig.topic,

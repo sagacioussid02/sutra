@@ -73,6 +73,20 @@ Assembly takes the user id from the `per-user-identity` mapping and reads
 only that user's stores and tool views. There is no multi-user snapshot
 and no field that mixes users.
 
+### What changed during implementation
+- The finance pointer is "when the finance snapshot tool was last read this
+  session", because finanxe's snapshot carries no timestamp. If never read, the
+  field is absent.
+- The presence hint is in memory only: after a restart it is not known, never
+  guessed. Values are a fixed set (home, out, busy, do-not-disturb).
+- Only the calendar (a tool call) is cached for its TTL; local reads are always
+  fresh, so a reminder created a moment ago shows at once.
+- The calendar read honours the current safety mode and authentication, the
+  same as a model-requested tool call would. A user-per-snapshot mapping uses
+  the single owner until `per-user-identity` lands.
+- The judge's own context was never hand-assembled for commitments or presence,
+  so it simply gains the snapshot block.
+
 ## Risks / Trade-offs
 
 - [Assembly latency on turn start] → per-source timeouts with absence on
