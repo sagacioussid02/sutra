@@ -1,0 +1,15 @@
+# Copy to events.yaml (gitignored). Without events.yaml the gateway has no
+# event intake. Producers post to POST /events with their own bearer token;
+# they are not gateway users and cannot call tools.
+#
+# forward_url is the orchestrator's local event listener (SUTRA_EVENTS_PORT);
+# forward_secret must equal the orchestrator's SUTRA_EVENTS_SECRET.
+forward_url: "http://127.0.0.1:8766/events"
+forward_secret: "REPLACE_WITH_A_LONG_RANDOM_SECRET"
+
+producers:
+  - id: front-door-camera
+    token: "REPLACE_WITH_A_LONG_RANDOM_TOKEN"
+    owner: sid                # the user every event from this producer belongs to
+    kinds: [camera_motion]    # kinds: weather_warning, calendar_change, camera_motion, broker_fill, phone_notification
+    rate_per_hour: 30

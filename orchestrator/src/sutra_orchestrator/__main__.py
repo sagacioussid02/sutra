@@ -20,6 +20,7 @@ from .orchestrator import Orchestrator
 from .agents import AgentCommands
 from .interests import InterestCommands, InterestService, InterestStore, Reflector
 from .graph import GraphCommands
+from .events import EventsCommands, build_events
 from .offers import OffersCommands, build_graph_and_offers
 from .idle import IdleCommands, build_idle
 from .lessons import LessonCommands, build_lessons
@@ -131,7 +132,11 @@ async def _run(verbose: bool) -> int:
             interest_commands = InterestCommands(interests)
         graph, offers = build_graph_and_offers(config, model, _memory_dir)
         graph_commands = GraphCommands(graph) if graph is not None else None
-        offers_commands = OffersCommands(offers) if offers is not None else None
+        built_events = build_events(config, offers, _memory_dir)
+        events = built_events[0] if built_events else None
+        event_listener = built_events[1] if built_events else None
+        offers_commands = OffersCommands(offers, events=events) if offers is not None else None
+        events_commands = EventsCommands(events) if events is not None else None
         agents = None
         agent_commands = None
         if config.agents_enabled:
@@ -191,7 +196,7 @@ async def _run(verbose: bool) -> int:
         # Reminder commands first: the memory handler answers every "/"
         # line (including "unknown command"), so it must be tried last.
         commands = CommandSet(
-            reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands,
+            reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands, events_commands,
             idle_commands, lesson_commands, humor_commands, life_commands,
             feed_commands, hangout_commands, mode_commands, auth_commands, memory_commands
         )
@@ -272,6 +277,10 @@ async def _run(verbose: bool) -> int:
             background_tasks.append(watch_task("interests", interests.start_task()))
         if offers is not None:
             background_tasks.append(watch_task("offers", offers.start_task()))
+        if events is not None:
+            await event_listener.start()
+            background_tasks.append(watch_task("events", events.start_task()))
+            print(f"Events are on: listening on 127.0.0.1:{event_listener.port} for the gateway.")
         if lessons is not None:
             background_tasks.append(watch_task("lessons", lessons.start_task()))
         if life is not None:
@@ -301,6 +310,9 @@ async def _run(verbose: bool) -> int:
                 await feeds.stop()
             if idle is not None:
                 await idle.stop_task()
+            if events is not None:
+                await event_listener.stop()
+                await events.stop_task()
             if offers is not None:
                 await offers.stop_task()
             await orchestrator.flush()
@@ -315,6 +327,8 @@ async def _run(verbose: bool) -> int:
                 interests.store.close()
             if graph is not None:
                 graph.store.close()
+            if events is not None:
+                events.store.close()
             if offers is not None:
                 offers.store.close()
             if idle is not None:

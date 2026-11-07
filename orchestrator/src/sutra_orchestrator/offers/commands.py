@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
+from typing import TYPE_CHECKING
+
 from .service import KINDS, OffersService
+
+if TYPE_CHECKING:
+    from ..events import EventsService
 
 HELP = [
     "Offer commands:",
@@ -20,9 +25,10 @@ HELP = [
 
 
 class OffersCommands:
-    def __init__(self, service: OffersService) -> None:
+    def __init__(self, service: OffersService, events: EventsService | None = None) -> None:
         self._service = service
         self._store = service.store
+        self._events = events
 
     async def handle(self, line: str, read: Callable[[str], Awaitable[str]]) -> list[str] | None:
         line = line.strip()
@@ -85,7 +91,30 @@ class OffersCommands:
             return ["Usage: /offers signal <kind> <minutes> <text>"]
         kind, minutes, text = parts[0], int(parts[1]), parts[2]
         now = self._service._now()
+        if self._events is not None and self._events.enabled and self._events_signal(kind, minutes, text, now):
+            return ["Signal sent into the event log as source 'manual'; it will be picked up shortly."]
         sid = self._service.add_signal(
             kind, text, source="manual", expires_at=now + timedelta(minutes=max(1, minutes)), topic_hint=text[:60]
         )
         return [f"Signal #{sid} received."] if sid else ["That signal was empty."]
+
+    def _events_signal(self, kind: str, minutes: int, text: str, now) -> bool:
+        """The development shim: put the signal into the event log as an envelope from source 'manual'."""
+        from ..events import EventError, event_kind_for  # local: events depends on offers
+
+        event_kind = event_kind_for(kind)
+        if event_kind is None:
+            return False
+        from ..events.kinds import KINDS
+
+        minutes = min(max(1, minutes), KINDS[event_kind]["default_expiry_minutes"])
+        envelope = {
+            "id": f"manual-{int(now.timestamp() * 1000)}", "source": "manual", "kind": event_kind,
+            "user_id": "owner", "received_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=minutes)).isoformat(),
+            "payload": {"summary": text[:200]},
+        }
+        try:
+            return self._events.ingest(envelope) or True
+        except EventError:
+            return False

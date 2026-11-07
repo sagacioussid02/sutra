@@ -610,3 +610,30 @@ When on, Sutra can ask a short question about something you recently said, typed
 | `SUTRA_AUTH_ACTION_NEED` | 2 | right answers (out of at most 3) for a protected-tool grant |
 | `SUTRA_AUTH_TOOLS` | all changing tools | protected tools: names, or `none` |
 | `SUTRA_AUTH_DIR` | the memory directory | where `auth.db` lives |
+
+
+## Inbound events
+
+Things that happen while you are not talking to Sutra (a camera sees someone at the door, a broker order fills, a calendar event moves) arrive as **events** through the gateway. An event is a notification, never an instruction: it cannot create a memory, confirm or approve anything, change a tool tier, or raise its own priority. The most it can do is become an offer, which still goes through the ask-first arbiter.
+
+**Turn it on** (off by default, because it opens a local port):
+
+1. In `orchestrator/.env`: `SUTRA_EVENTS=on` and `SUTRA_EVENTS_SECRET=<a long random string>`.
+2. In `gateway/events.yaml` (copy `events.example.yaml`, gitignored): set `forward_secret` to the same string, and register each producer with its own token, the kinds it may emit, an owner and an hourly rate.
+3. Restart both. The orchestrator listens on `127.0.0.1:8766` for the gateway; producers talk only to the gateway.
+
+**Emit an event:**
+
+```
+curl -X POST http://127.0.0.1:8765/events \
+  -H "Authorization: Bearer <producer token>" \
+  -d '{"kind":"camera_motion","payload":{"summary":"Someone at the front door"}}'
+```
+
+Kinds are `weather_warning`, `calendar_change`, `camera_motion`, `broker_fill` and `phone_notification`. A payload holds short text fields only (`summary` required, optional `urgency` of low/medium/high and `ref`), at most 1 KB. The gateway sets the id, source, owner and receive time; a producer cannot. It may shorten an event's expiry but not extend it. Unregistered tokens, kinds a producer is not registered for, bad payloads and over-rate producers are rejected and audited. If the orchestrator is down the producer gets a 503 with `Retry-After` and nothing is stored.
+
+**Delivery:** events go into `events.db`; each consumer keeps its own cursor and gets events at least once, in order, and handles them idempotently. A consumer that keeps failing on one event skips it after `SUTRA_EVENTS_MAX_ATTEMPTS`. Expired events are never delivered and are swept; delivered events are kept `SUTRA_EVENTS_RETENTION_DAYS` days. The offers service is the first consumer. An `urgency` of high is only the producer's claim: it takes the urgent path only if the producer is listed in `SUTRA_OFFERS_URGENT_SOURCES`.
+
+**Control:** `/events` shows recent events, per-source counts and delivery state; `/events off` stops intake and delivery. `/offers signal weather 30 Snow tonight` now goes through the same log as source `manual`.
+
+**Writing a producer:** it is a script that makes the POST above; keep large content with the producer and send a reference in `ref`.
