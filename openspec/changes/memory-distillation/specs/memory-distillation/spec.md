@@ -52,8 +52,8 @@ SHALL NOT invent or resolve a horizon that was not stated.
 - **THEN** the candidate is stored with no horizon rather than an invented one
 
 ### Requirement: Contradictions supersede on approval, never silently
-A distilled candidate MAY be marked as replacing one specific active
-memory it contradicts, and the pairing SHALL be shown in review.
+The system SHALL allow a distilled candidate to be marked as replacing one
+specific active memory it contradicts, and the pairing SHALL be shown in review.
 Approving a marked candidate SHALL supersede the named memory (which
 remains visible as superseded); rejecting it SHALL change nothing. An
 unmarked candidate SHALL NOT supersede any memory.

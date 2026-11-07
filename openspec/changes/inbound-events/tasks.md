@@ -7,7 +7,7 @@
 ## 2. Gateway intake
 
 - [ ] 2.1 Add the intake route: authenticate the producer token, check the kind against its registration, enforce the rate limit, write the audit entry (accepted and rejected)
-- [ ] 2.2 Attribute the event to a user via the `per-user-identity` mapping for the producer's configured owner; unattributed events are rejected
+- [ ] 2.2 Attribute the event to the producer's configured owner user id (single-owner for now; `per-user-identity` is deferred and will replace this lookup); events with no configured owner are rejected
 - [ ] 2.3 Forward accepted events to the orchestrator event log; a down orchestrator returns a retryable error and stores nothing in the gateway
 - [ ] 2.4 Tests: unregistered producer and wrong-kind producer rejected; over-limit producer rejected with audit entry; event text containing instruction-like content is stored as data only
 

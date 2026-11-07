@@ -58,8 +58,9 @@ inputs from it, and later hardware (cameras, sensors) plugs into it.
 - Orchestrator: a new `events` package (envelope, log store, drain,
   consumer registry) following the reminders/offers layout, with a local
   `events.db` (owner-only, gitignored).
-- Depends on `per-user-identity` for attributing an event to a user, and
-  on `gateway-core` (auth, tiers, audit). Consumed by `proactive-offers`
+- Attributes each event to the producer's configured owner (single-owner;
+  `per-user-identity` is deferred and will later supply the mapping), and
+  depends on `gateway-core` (auth, tiers, audit). Consumed by `proactive-offers`
   first; `world-state` and later hardware changes build on it.
 - No twin, finanxe, or minions changes. Existing projects are not modified
   to emit events; producers are small new shims owned by whoever runs them.
