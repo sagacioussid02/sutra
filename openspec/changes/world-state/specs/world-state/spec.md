@@ -66,3 +66,123 @@ resolve, or expire a commitment.
 #### Scenario: Resolved offer
 - **WHEN** an offer is answered and a new snapshot is assembled
 - **THEN** the offer no longer appears as open
+
+### Requirement: Principal state enters the snapshot only from declared sources
+The snapshot SHALL include a principal section — availability windows,
+a daily attention budget in minutes, major commitments with end dates,
+and an effort-sensitivity preference — read only from user-declared
+settings and user-confirmed entries for the snapshot's user. The system
+SHALL NOT derive any principal field from observed behaviour, and SHALL
+NOT read a calendar to construct one in this change.
+
+#### Scenario: Declared budget appears
+- **WHEN** the user has declared a daily attention budget and a snapshot is assembled
+- **THEN** the principal section shows the budget with its source and the time it was set
+
+#### Scenario: Nothing declared
+- **WHEN** the user has declared no principal state
+- **THEN** the snapshot has no principal section, however the user's recent behaviour looks
+
+#### Scenario: Commitment recorded as stated
+- **WHEN** the user declares a major commitment with an end date
+- **THEN** the principal section records it with that end date, unchanged by inference
+
+### Requirement: Principal fields obey the same staleness rules
+Each principal field SHALL record its source and the time it was set,
+and SHALL be presented with its age. A major commitment SHALL be
+presented as current only up to its stated end date; past that date it
+SHALL be marked ended or omitted — never presented as still current. A
+principal field treated as stale SHALL be excluded from budgeting
+decisions while remaining visible as stale in the rendered snapshot.
+
+#### Scenario: Expired commitment
+- **WHEN** a snapshot is assembled after a commitment's end date
+- **THEN** the commitment is marked ended or omitted, and no consumer treats it as current
+
+#### Scenario: Stale budget not applied
+- **WHEN** the declared attention budget is stale at offer time
+- **THEN** the arbiter does not apply it and falls back to the existing offer cap
+
+### Requirement: Offers carry a user-effort estimate
+The ask-first arbiter SHALL attach an estimated user-effort to every
+offer it considers: an amount of time in minutes and a kind — decision,
+review, or hands-on work. When an offer is presented, its estimate
+SHALL be available to the user alongside it.
+
+#### Scenario: Presented offer shows its price
+- **WHEN** an offer is presented to the user
+- **THEN** the offer carries its estimated minutes and effort kind
+
+### Requirement: Over-budget offers are deferred, visibly, and resurface
+When an offer's estimated user-effort exceeds the user's remaining
+declared attention budget, the arbiter SHALL defer the offer instead of
+presenting it, SHALL record the deferral and its reason, and SHALL NOT
+discard the offer. The deferral SHALL be visible in the control surface
+and counted in the snapshot's open-commitments field. A deferred offer
+SHALL be reconsidered when the budget frees up — at the start of a new
+day, or when a major commitment reaches its end date — and SHALL still
+pass every existing gate, including the daily offer cap, before being
+presented. Timed offers and reminders whose moment falls inside a
+declared unavailable window SHALL be scheduled outside that window.
+
+#### Scenario: Over-budget offer deferred
+- **WHEN** an offer's estimate exceeds the user's remaining budget for the day
+- **THEN** the offer is not presented, is recorded as deferred with its reason, and remains visible as deferred
+
+#### Scenario: Deferral is not loss
+- **WHEN** a deferred offer exists and the user inspects open commitments
+- **THEN** the deferred offer appears there, marked deferred
+
+#### Scenario: Resurfacing when capacity frees
+- **WHEN** a new day begins or a major commitment ends, freeing budget
+- **THEN** deferred offers are reconsidered and may be presented, subject to all existing gates
+
+#### Scenario: Unavailable window respected
+- **WHEN** an offer's natural moment falls inside a declared unavailable window
+- **THEN** it is scheduled outside the window
+
+### Requirement: Plans state the user-effort they bill
+A planner decomposing work SHALL prefer steps the system can complete
+autonomously within its granted autonomy over steps that bill the
+user's time, when both achieve the same step. For every step that does
+bill the user, the plan SHALL state the expected user-effort — minutes
+and kind — where the plan is presented.
+
+#### Scenario: User-billed step is priced in the plan
+- **WHEN** a plan containing a step only the user can perform is presented
+- **THEN** that step is shown with its estimated minutes and effort kind
+
+#### Scenario: Autonomous alternative preferred
+- **WHEN** a step can be completed either by the system within its granted autonomy or by the user
+- **THEN** the plan uses the system's completion and bills the user nothing for that step
+
+### Requirement: Missing principal state falls back to existing behaviour
+When principal state is absent or every principal field is stale,
+consumers SHALL behave exactly as they did before this change: offers
+are governed by the existing offer cap alone, plans carry no effort
+accounting, and timing follows existing rules. No consumer SHALL block,
+delay, or fail a turn, offer, or plan because principal state is
+missing.
+
+#### Scenario: No budget declared
+- **WHEN** a user with no declared attention budget receives offers
+- **THEN** the offers are governed by the existing daily cap and no other budget rule
+
+#### Scenario: Turn proceeds without principal state
+- **WHEN** a turn begins and no principal state exists for the user
+- **THEN** the snapshot assembles normally, without a principal section, and consumers proceed
+
+### Requirement: Principal state is per-user, inspectable, and editable
+Principal state SHALL be stored per user with the same protections as
+the memory stores, SHALL appear only in that user's snapshots, and
+SHALL NOT be an input to another user's offers or plans. The user SHALL
+be able to view every principal field as consumers see it and to edit
+or clear each field; an edit SHALL take effect at the next assembly.
+
+#### Scenario: User inspects and edits
+- **WHEN** the user views the principal section and changes the attention budget
+- **THEN** the next assembled snapshot shows the new budget with its new set-time
+
+#### Scenario: No cross-user leakage
+- **WHEN** snapshots are assembled for two different users
+- **THEN** neither snapshot contains the other user's principal fields, and neither user's offers are shaped by the other's budget
