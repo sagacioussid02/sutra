@@ -669,3 +669,16 @@ Memory remembers what you said one sentence at a time. Distillation looks across
 **What comes out:** proposals only, in `/proposals`, commitments first. Each shows how many conversations it was pieced together from (one is marked thin support), and `/why <id>` shows every one of them. Nothing is recalled until you `/approve` it. If a proposal contradicts something you already have, `/proposals` shows the pair; approving replaces the old memory (kept, listed as replaced), rejecting changes nothing. A rejected proposal is not suggested again.
 
 **Schedule and cost:** about once a day while you are away, at most `SUTRA_DISTILL_CALLS` model calls a day; a backlog drains over several passes. `/distill` shows the last pass and where it got to, `/distill run` does one now, `/distill off` stops the schedule. After one productive pass you get a single notice, not one per item.
+
+## Propose a patch (draft a missing capability)
+
+When nothing Sutra has can do what you asked, it can offer to draft the missing code. It starts only after your yes, runs in the background, and ends with a branch for you to review. It never merges, pushes, installs or applies anything. Off by default: set `SUTRA_PATCHES=on` (text and voice; in voice the result is announced like a research result, and `/patches` is a text-console command).
+
+- **Where it works:** a git worktree outside the running checkout (`~/.sutra/patches/worktrees/<id>`), on a new branch `sutra/patch-<id>` cut from `main`. The running code is never written.
+- **What it can do:** three tools only: read a file, write a file, run the tests. No shell, git, gateway, memory or network.
+- **What it can't touch:** a fixed list in code (`patches/protected.py`): the safety modes, authentication, confirmation gate, classifier, tool gate, the gateway's auth/confirm/audit/registry code, `.env*`, tokens, `*.db`, hooks, dependency files, and this feature. Writes there are refused, and the finished diff is checked again (renames, deletions, symlinks); any hit rejects the whole patch and removes it.
+- **Tests need a sandbox:** `sandbox-exec` on macOS or `bwrap` on Linux, with no network, writes only in the draft, a scrubbed environment and a timeout. With neither, tests are not run and the draft says "not tested". It never runs unconfined.
+- **Limits:** tool calls, output tokens, wall-clock and a daily run cap; a run that hits one ends `partial`.
+- **Reviewing:** `/patches` lists drafts, `/patches show <id>` prints the (untrusted) summary, files, test outcome and diff stat, then `git diff main...sutra/patch-<id>` to read it and `git merge sutra/patch-<id>` if you agree. `/patches discard <id|all>` removes drafts.
+
+Settings: `SUTRA_PATCHES`, `SUTRA_PATCHES_DIR`, `_MAX_TOOL_CALLS`, `_RUN_TOKENS`, `_TIMEOUT`, `_DAILY_RUNS`, `_DAILY_TOKENS`, `_TEST_COMMAND`, `_TEST_DIR`, `_TEST_TIMEOUT`.

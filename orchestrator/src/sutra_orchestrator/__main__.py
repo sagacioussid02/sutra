@@ -18,6 +18,7 @@ from .memstore.commands import MemoryCommands
 from .model import AnthropicModel
 from .orchestrator import Orchestrator
 from .agents import AgentCommands
+from .patches import PatchCommands, maybe_build_patch_service
 from .interests import InterestCommands, InterestService, InterestStore, Reflector
 from .graph import GraphCommands
 from .distill import DistillCommands, build_distill
@@ -147,6 +148,8 @@ async def _run(verbose: bool) -> int:
                 _memory_dir(config.agents_dir), ZoneInfo(config.reminders_tz),
             )
             agent_commands = AgentCommands(agents)
+        patches = maybe_build_patch_service(config, model, _memory_dir)
+        patch_commands = PatchCommands(patches) if config.patches_enabled else None
         lessons = (
             build_lessons(config, model, memory, offers, _memory_dir(config.lessons_dir))
             if config.lessons_enabled
@@ -192,19 +195,19 @@ async def _run(verbose: bool) -> int:
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
             last_activity=lambda: orchestrator.last_activity,
-            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks),
+            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks or orchestrator.patch_tasks),
         )
         distill = build_distill(
             config, model, memory, offers,
             last_activity=lambda: orchestrator.last_activity,
-            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks),
+            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks or orchestrator.patch_tasks),
         )
         distill_commands = DistillCommands(distill) if distill is not None else None
         idle_commands = IdleCommands(idle) if idle is not None else None
         # Reminder commands first: the memory handler answers every "/"
         # line (including "unknown command"), so it must be tried last.
         commands = CommandSet(
-            reminder_commands, agent_commands, interest_commands, graph_commands, offers_commands, events_commands,
+            reminder_commands, agent_commands, patch_commands, interest_commands, graph_commands, offers_commands, events_commands,
             idle_commands, lesson_commands, humor_commands, life_commands,
             feed_commands, hangout_commands, mode_commands, auth_commands, distill_commands, memory_commands
         )
@@ -215,6 +218,7 @@ async def _run(verbose: bool) -> int:
             memory=memory,
             reminders=reminders,
             agents=agents,
+            patches=patches,
             interests=interests,
             graph=graph,
             offers=offers,
@@ -262,6 +266,21 @@ async def _run(verbose: bool) -> int:
             orchestrator.set_research_hooks(
                 lambda: len(orchestrator.research_tasks) < 2, adopt
             )
+        if patches is not None:
+            def adopt_patch(label: str, task: str, work) -> None:
+                def done(t) -> None:
+                    if t.cancelled():
+                        return
+                    try:
+                        reply = t.result()
+                    except Exception:
+                        reply = "The draft didn't work out."
+                    orchestrator.note_background_result(task, reply)
+                    print(f"\nsutra (draft: {label})> {reply}")
+
+                work.add_done_callback(done)
+
+            orchestrator.set_patch_hook(adopt_patch)
         if interests is not None:
             shown: set[int] = set()
 
@@ -350,6 +369,8 @@ async def _run(verbose: bool) -> int:
                 reminder_store.close()
             if agents is not None:
                 agents.store.close()
+            if patches is not None:
+                patches.store.close()
             if interests is not None:
                 interests.store.close()
             if graph is not None:
