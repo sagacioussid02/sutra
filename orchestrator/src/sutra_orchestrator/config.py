@@ -106,6 +106,17 @@ class Config:
     agent_timeout_s: int = 180
     agent_daily_runs: int = 3
     agent_daily_tokens: int = 60_000
+    # Propose-a-patch: draft code on a branch for review. Off unless asked for.
+    patches_enabled: bool = False
+    patches_dir: str = "~/.sutra/patches"
+    patches_max_tool_calls: int = 20
+    patches_run_tokens: int = 20_000
+    patches_timeout_s: int = 600
+    patches_daily_runs: int = 2
+    patches_daily_tokens: int = 60_000
+    patches_test_command: str = ""
+    patches_test_dir: str = "orchestrator"
+    patches_test_timeout_s: int = 300
     reminders_enabled: bool = True
     reminders_dir: str = "data"
     # Wall-clock reminder times ("at 5pm") are read in this timezone.
@@ -252,6 +263,16 @@ def load_config(
         agent_timeout_s=_int(merged, "SUTRA_AGENT_TIMEOUT", 180),
         agent_daily_runs=_int(merged, "SUTRA_AGENT_DAILY_RUNS", 3),
         agent_daily_tokens=_int(merged, "SUTRA_AGENT_DAILY_TOKENS", 60_000),
+        patches_enabled=_bool(merged, "SUTRA_PATCHES", False),
+        patches_dir=merged.get("SUTRA_PATCHES_DIR") or "~/.sutra/patches",
+        patches_max_tool_calls=_int(merged, "SUTRA_PATCHES_MAX_TOOL_CALLS", 20),
+        patches_run_tokens=_int(merged, "SUTRA_PATCHES_RUN_TOKENS", 20_000),
+        patches_timeout_s=_int(merged, "SUTRA_PATCHES_TIMEOUT", 600),
+        patches_daily_runs=_int(merged, "SUTRA_PATCHES_DAILY_RUNS", 2),
+        patches_daily_tokens=_int(merged, "SUTRA_PATCHES_DAILY_TOKENS", 60_000),
+        patches_test_command=merged.get("SUTRA_PATCHES_TEST_COMMAND") or "",
+        patches_test_dir=merged.get("SUTRA_PATCHES_TEST_DIR") or "orchestrator",
+        patches_test_timeout_s=_int(merged, "SUTRA_PATCHES_TEST_TIMEOUT", 300),
         reminders_enabled=_bool(merged, "SUTRA_REMINDERS", True),
         reminders_dir=merged.get("SUTRA_REMINDERS_DIR")
         or merged.get("SUTRA_MEMORY_DIR")
