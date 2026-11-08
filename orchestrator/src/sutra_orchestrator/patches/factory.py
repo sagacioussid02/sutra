@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shlex
+from collections.abc import Callable
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -43,3 +44,16 @@ def build_patch_service(
     return PatchService(
         PatchStore(directory), Drafter(model, run_tests, budget), repo, directory / "worktrees", budget, tz
     )
+
+
+def maybe_build_patch_service(
+    config: Config, model: ResearchModel, resolve_dir: Callable[[str], Path]
+) -> PatchService | None:
+    """The service when patches are on and this is a git checkout, else None."""
+    if not config.patches_enabled:
+        return None
+    repo = Path(__file__).resolve().parents[4]
+    if not (repo / ".git").exists():
+        print("SUTRA_PATCHES is on, but this isn't a git checkout, so patches stay off.")
+        return None
+    return build_patch_service(config, model, repo, resolve_dir(config.patches_dir), ZoneInfo(config.reminders_tz))

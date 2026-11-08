@@ -19,6 +19,7 @@ from ..model import AnthropicModel
 from ..orchestrator import Orchestrator
 from ..prompts import load_prompt
 from ..agents.factory import build_agent_service
+from ..patches import maybe_build_patch_service
 from ..interests import InterestService, InterestStore, Reflector
 from ..distill import build_distill
 from ..events import build_events
@@ -138,6 +139,7 @@ async def _run(verbose: bool) -> int:
                 config, model, gateway, lambda: orchestrator.gateway_tools,
                 _memory_dir(config.agents_dir), ZoneInfo(config.reminders_tz),
             )
+        patches = maybe_build_patch_service(config, model, _memory_dir)
         lessons = (
             build_lessons(config, model, memory, offers, _memory_dir(config.lessons_dir))
             if config.lessons_enabled
@@ -175,7 +177,7 @@ async def _run(verbose: bool) -> int:
         distill = build_distill(
             config, model, memory, offers,
             last_activity=lambda: orchestrator.last_activity,
-            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks),
+            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks or orchestrator.patch_tasks),
         )
         idle = build_idle(
             config, model, _memory_dir(config.idle_dir),
@@ -183,7 +185,7 @@ async def _run(verbose: bool) -> int:
             last_activity=lambda: orchestrator.last_activity,
             busy=lambda: (
                 orchestrator.pending is not None
-                or bool(orchestrator.research_tasks)
+                or bool(orchestrator.research_tasks or orchestrator.patch_tasks)
                 or session.busy()
             ),
         )
@@ -194,6 +196,7 @@ async def _run(verbose: bool) -> int:
             memory=memory,
             reminders=reminders,
             agents=agents,
+            patches=patches,
             interests=interests,
             graph=graph,
             offers=offers,
@@ -289,6 +292,8 @@ async def _run(verbose: bool) -> int:
             )
         if agents is not None:
             orchestrator.set_research_hooks(session.can_start_job, session.adopt_research)
+        if patches is not None:
+            orchestrator.set_patch_hook(session.adopt_research)
         if reminder_scheduler is not None and reminder_store is not None:
             # Reminders that fired but were never heard (the last run ended
             # first) are said now, marked late.
@@ -329,6 +334,8 @@ async def _run(verbose: bool) -> int:
                 reminder_store.close()
             if agents is not None:
                 agents.store.close()
+            if patches is not None:
+                patches.store.close()
             if interests is not None:
                 interests.store.close()
             if graph is not None:

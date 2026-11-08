@@ -18,7 +18,7 @@ from .memstore.commands import MemoryCommands
 from .model import AnthropicModel
 from .orchestrator import Orchestrator
 from .agents import AgentCommands
-from .patches import PatchCommands, build_patch_service
+from .patches import PatchCommands, maybe_build_patch_service
 from .interests import InterestCommands, InterestService, InterestStore, Reflector
 from .graph import GraphCommands
 from .distill import DistillCommands, build_distill
@@ -148,17 +148,8 @@ async def _run(verbose: bool) -> int:
                 _memory_dir(config.agents_dir), ZoneInfo(config.reminders_tz),
             )
             agent_commands = AgentCommands(agents)
-        patches = None
-        patch_commands = None
-        if config.patches_enabled:
-            repo = Path(__file__).resolve().parents[3]
-            if (repo / ".git").exists():
-                patches = build_patch_service(
-                    config, model, repo, _memory_dir(config.patches_dir), ZoneInfo(config.reminders_tz)
-                )
-            else:
-                print("SUTRA_PATCHES is on, but this isn't a git checkout, so patches stay off.")
-            patch_commands = PatchCommands(patches)
+        patches = maybe_build_patch_service(config, model, _memory_dir)
+        patch_commands = PatchCommands(patches) if config.patches_enabled else None
         lessons = (
             build_lessons(config, model, memory, offers, _memory_dir(config.lessons_dir))
             if config.lessons_enabled
@@ -204,12 +195,12 @@ async def _run(verbose: bool) -> int:
             config, model, _memory_dir(config.idle_dir),
             interests=interests, graph=graph, agents=agents, offers=offers,
             last_activity=lambda: orchestrator.last_activity,
-            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks),
+            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks or orchestrator.patch_tasks),
         )
         distill = build_distill(
             config, model, memory, offers,
             last_activity=lambda: orchestrator.last_activity,
-            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks),
+            busy=lambda: orchestrator.pending is not None or bool(orchestrator.research_tasks or orchestrator.patch_tasks),
         )
         distill_commands = DistillCommands(distill) if distill is not None else None
         idle_commands = IdleCommands(idle) if idle is not None else None

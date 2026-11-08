@@ -7,7 +7,7 @@ review and merge. See ``openspec/changes/propose-a-patch/``.
 
 from .commands import PatchCommands
 from .db import PatchSchemaError
-from .factory import build_patch_service
+from .factory import build_patch_service, maybe_build_patch_service
 from .protected import PROTECTED, is_protected
 from .service import PatchResult, PatchService
 from .store import PatchRow, PatchStore
@@ -24,5 +24,6 @@ __all__ = [
     "PatchService",
     "PatchStore",
     "build_patch_service",
+    "maybe_build_patch_service",
     "is_protected",
 ]

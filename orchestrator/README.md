@@ -672,7 +672,7 @@ Memory remembers what you said one sentence at a time. Distillation looks across
 
 ## Propose a patch (draft a missing capability)
 
-When nothing Sutra has can do what you asked, it can offer to draft the missing code. It starts only after your yes, runs in the background, and ends with a branch for you to review. It never merges, pushes, installs or applies anything. Off by default: set `SUTRA_PATCHES=on` (text mode only for now).
+When nothing Sutra has can do what you asked, it can offer to draft the missing code. It starts only after your yes, runs in the background, and ends with a branch for you to review. It never merges, pushes, installs or applies anything. Off by default: set `SUTRA_PATCHES=on` (text and voice; in voice the result is announced like a research result, and `/patches` is a text-console command).
 
 - **Where it works:** a git worktree outside the running checkout (`~/.sutra/patches/worktrees/<id>`), on a new branch `sutra/patch-<id>` cut from `main`. The running code is never written.
 - **What it can do:** three tools only: read a file, write a file, run the tests. No shell, git, gateway, memory or network.
