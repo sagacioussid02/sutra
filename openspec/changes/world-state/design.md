@@ -19,6 +19,8 @@ consumers a single object whose honesty about age is the whole point.
 - Cheap: assembly on turn start must not add noticeable latency or a
   pile of tool calls.
 - A field that cannot be observed is absent, and its absence is visible.
+- Consumers can shape what they ask of the user to the user's declared
+  capacity, not only to Sutra's own budgets.
 
 **Non-Goals:**
 - A continuously updated cache or background poller.
@@ -29,6 +31,9 @@ consumers a single object whose honesty about age is the whole point.
   actually needs them, so numbers are never quoted from a stale copy.
 - Predicting the future state (traffic later, calendar conflicts next
   week). The snapshot is now, plus what is already scheduled.
+- Inferring the user's capacity from behaviour. Principal state is
+  declared by the user or confirmed by them; nothing is derived from
+  watching them, and no calendar is scraped for it in this change.
 
 ## Decisions
 
@@ -87,6 +92,92 @@ and no field that mixes users.
 - The judge's own context was never hand-assembled for commitments or presence,
   so it simply gains the snapshot block.
 
+### Principal state is part of the snapshot, and declared only
+The registry gains a principal section describing the user's capacity,
+with the same source / observed-at / TTL treatment as every other
+field:
+
+- **Availability windows** — when the user is open to being asked
+  things. Until changed, like the presence hint: age is shown, it does
+  not expire.
+- **Attention budget** — a coarse daily allowance in minutes for
+  assistant asks (offers, questions, reviews). Until changed.
+- **Major commitments** — user-declared entries with end dates ("house
+  closing, mid-December"), recorded exactly as stated. A commitment is
+  current until its end date and stale after it; it is never extended
+  by inference.
+- **Effort sensitivity** — a preference for how Sutra should bias when
+  the budget runs low (for example: prefer work it can finish itself,
+  asynchronously, over work that bills the user). Until changed.
+
+The only sources are explicit: user-declared settings and entries the
+user has confirmed. There is no inference of capacity from behaviour —
+not from response latency, not from ignored offers, not from activity
+patterns — and no calendar scraping in this change. A calendar-derived
+source would be a later, separately approved capability; if it ever
+lands, it enters through the same registry as a named source, not as a
+silent upgrade of a declared field.
+
+Principal state is the one thing the snapshot reads that is not owned
+by an existing machine: it is the user's own declaration, held in a
+small per-user store with the memory stores' protections (local
+SQLite, schema-versioned, file permissions 0600). The snapshot remains
+a view — it persists nothing; it reads the declaration at assembly
+time like it reads any other store.
+
+### Effort rides on the offer
+The ask-first arbiter attaches an estimated user-effort to every offer
+it considers: minutes, plus the kind of effort — a decision, a review,
+or hands-on work. Kinds matter because they are not interchangeable:
+ten minutes of hands-on work inside an unavailable window costs the
+user more than a two-minute decision inside an open one.
+
+An offer whose estimate exceeds the user's remaining budget for the
+day is deferred, not dropped: the offers store records it as deferred
+with the reason, the control surface shows deferred offers, and the
+snapshot's commitments field counts them, so a deferral is visible
+rather than a silent disappearance. A deferred offer is reconsidered
+when the budget frees up — a new day resets the allowance, a major
+commitment reaching its end date frees the capacity it was holding —
+and presenting it still passes the existing gates, including the
+four-a-day cap, which applies on top of the budget and independently
+of it.
+
+Timed proposals respect declared availability: an offer or reminder
+whose natural moment falls inside an unavailable window is scheduled
+outside it, the same way quiet hours already work for spoken delivery.
+
+### The planner prices the user's time
+When a planner (this change's consumers include any future one)
+decomposes work into steps, it prices each step in two currencies:
+Sutra's own cost, which the existing budgets already govern, and the
+user's time. Between two decompositions that are otherwise equal, it
+prefers the one whose steps Sutra can complete autonomously within its
+granted autonomy. When a step does bill the user — a decision only the
+user can make, a review, hands-on work — the plan states the expected
+user-effort where the plan is presented, in the same minutes-and-kind
+terms as an offer. A plan that quietly assumes an evening of the
+user's time is a mispriced plan, and mispricing is treated as a defect
+in the plan, not a surprise for the user.
+
+### Absent principal state changes nothing
+Principal state is an input, never a prerequisite. If the user has
+declared nothing, or every principal field is stale, consumers behave
+exactly as they do today: the offer cap alone governs offers, plans
+carry no effort statements, timing follows existing rules. Stale
+principal fields render as stale in the snapshot and are treated as
+absent for budgeting — a budget declared for a life the user is no
+longer living must not silently govern what they are asked. Nothing
+blocks a turn, an offer, or a plan on missing principal state.
+
+### Principal state is the user's data
+Every principal field can be viewed and edited by the user it
+describes: the `/state` control surface shows the principal section
+exactly as consumers see it, and control commands change each field.
+Edits take effect at the next assembly. Principal state never appears
+in another user's snapshot, is never shared across users, and is never
+an input to another user's offers or plans.
+
 ## Risks / Trade-offs
 
 - [Assembly latency on turn start] → per-source timeouts with absence on
@@ -101,6 +192,13 @@ and no field that mixes users.
 - [Presence hint leaks into wrong contexts] → the hint is user-set,
   coarse, shown in the control surface, and included in the snapshot
   only for the user's own session.
+- [Declared principal state drifts from real life] → commitments carry
+  end dates and expire on them, budget and availability show their age
+  and are one command to change, and staleness falls back to today's
+  defaults rather than to a wrong budget.
+- [Effort estimates are rough] → estimates are deliberately coarse
+  (minutes, three kinds); the cost of a wrong estimate is a visible,
+  overridable deferral — never a lost offer or a blocked plan.
 
 ## Migration Plan
 
@@ -118,3 +216,7 @@ lands, not before.
 - Presence: is a manual hint enough, or should the voice client's
   activity state (in a conversation, idle) feed it automatically? Leaning
   yes for client activity, no for anything location-like.
+- Should observed offer outcomes (accepted, finished in two minutes)
+  calibrate future effort estimates? Leaning no in this change —
+  calibration is inference about the user and waits for its own
+  approval, like any other inferred field.
