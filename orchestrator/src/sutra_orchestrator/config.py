@@ -64,6 +64,12 @@ class Config:
     events_cap: int = 5000
     events_retention_days: int = 30
     events_max_attempts: int = 3
+    # Speaker identification and addressee detection (voice only). Off by
+    # default: with it off, utterances carry no signal and the
+    # orchestrator behaves exactly as before this change.
+    speaker_enabled: bool = False
+    speaker_dir: str = "data"
+    speaker_confirm_confidence: float = 0.7
     gossip_url: str = ""
     auth_enabled: bool = False
     auth_mode_questions: int = 1
@@ -219,6 +225,9 @@ def load_config(
         events_cap=_int(merged, "SUTRA_EVENTS_CAP", 5000),
         events_retention_days=_int(merged, "SUTRA_EVENTS_RETENTION_DAYS", 30),
         events_max_attempts=_int(merged, "SUTRA_EVENTS_MAX_ATTEMPTS", 3),
+        speaker_enabled=_bool(merged, "SUTRA_SPEAKER", False),
+        speaker_dir=merged.get("SUTRA_SPEAKER_DIR") or merged.get("SUTRA_MEMORY_DIR") or "data",
+        speaker_confirm_confidence=_confidence(merged, "SUTRA_SPEAKER_CONFIRM_CONFIDENCE", 0.7),
         auth_enabled=_bool(merged, "SUTRA_AUTH", False),
         auth_mode_questions=_int(merged, "SUTRA_AUTH_MODE_QUESTIONS", 1),
         auth_action_need=_int(merged, "SUTRA_AUTH_ACTION_NEED", 2),
@@ -279,6 +288,19 @@ def load_config(
         or "data",
         reminders_tz=_timezone(merged),
     )
+
+
+def _confidence(env: Mapping[str, str], name: str, default: float) -> float:
+    raw = env.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from None
+    if not 0.0 <= value <= 1.0:
+        raise ConfigError(f"{name} must be between 0 and 1, got {value}")
+    return value
 
 
 def _gossip_url(env: Mapping[str, str]) -> str:

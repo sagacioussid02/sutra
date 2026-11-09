@@ -176,9 +176,7 @@ async def test_gate_is_the_only_caller_that_sees_a_speaker_bound_turn():
     source = inspect.getsource(orchestrator)
 
     # The addressee gate sits before the pending branch in the source.
-    assert source.index("if not addressed_to_assistant") < source.index(
-        "self._handle_pending("
-    )
+    assert source.index("TurnGate.decide(") < source.index("self._handle_pending(")
     # _handle_pending has exactly one call site, guarded by the
     # speaker-binding check on the line above it.
     lines = source.splitlines()
