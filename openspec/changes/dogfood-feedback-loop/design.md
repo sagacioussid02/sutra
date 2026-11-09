@@ -169,3 +169,37 @@ created by the first run.
   one (more independent, more cost)? The rubric tier is advisory, so
   start with the same model and record it; revisit if soft scores look
   inflated against hand checks.
+
+## Implementation notes
+
+Decisions made while building, recorded so the spec and the code agree:
+
+- **Scripted and live modes.** The runner takes any model. The default
+  scripted model is free and deterministic (fixed reply, never calls a
+  tool, labels every unsettled confirmation reply `unclear`), which is
+  enough for the reminder, confirmation-gate and offer batteries and lets
+  the whole harness run in the unit tests. Scenarios that only mean
+  something against the real model are marked `requires_live` and are
+  skipped, and counted as skipped, in scripted runs.
+- **Lesson drafts are written to a file, not to the lesson store.** Writing
+  into the self-learning store during a run would contradict "no writes to
+  real stores". Drafts go to `lesson_proposals.jsonl`; the user runs
+  `dogfood import-lessons <lessons dir>`, which adds them as `proposed`.
+  The lesson store's schema allows only `correction` and `outcomes` as a
+  source, so imported drafts use `outcomes`; the dogfood provenance (key,
+  reason, run) stays in the proposals file. No change to `self-learning`.
+- **The dataset adds each turn once.** A turn already present (same
+  scenario fingerprint, position and text) is not appended again, so fixed
+  batteries contribute on their first run and generated batteries add only
+  new wordings; the version bumps only when turns are added. This keeps
+  repeated or scheduled runs from churning the committed dataset with
+  duplicates.
+- **Generated scenarios carry their template.** The classifier change
+  should split train/dev/test by template, not by scenario: two scenarios
+  from one template share phrasing, so a by-scenario split would still
+  leak.
+- **Seeding a pending confirmation.** Confirmation traps start from a
+  pending action set directly on the orchestrator (the same state a real
+  confirm-first tool call leaves), so a trap never depends on the model
+  choosing to call the tool. `conf-live-request-then-hedge` covers the
+  path where the model makes the request itself.

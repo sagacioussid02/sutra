@@ -1,0 +1,59 @@
+{
+  "battery": "memory",
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "mem-cross-session-recall",
+      "capability": "memory",
+      "requires_live": true,
+      "rubric": [
+        "answer_quality"
+      ],
+      "description": "a fact stated in session one is recalled in session three",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "by the way, my sister Anika just moved to Pune",
+          "speech_act": "chat",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "yes, remember that",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "new_session"
+        },
+        {
+          "kind": "user",
+          "text": "what's a good weekend plan?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "new_session"
+        },
+        {
+          "kind": "user",
+          "text": "remind me, which city did my sister move to?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        }
+      ],
+      "expect": [
+        {
+          "check": "reply_contains",
+          "turn": -1,
+          "any": [
+            "Pune"
+          ]
+        }
+      ]
+    }
+  ]
+}
