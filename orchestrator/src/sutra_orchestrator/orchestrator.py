@@ -1,9 +1,10 @@
 """The turn loop and the confirmation gate.
 
-``Orchestrator.respond(text, *, speaker_id=None, addressed_to_assistant=True)``
-is the whole public surface: one user utterance in, one reply out, with
-gateway tool calls in between. It has no terminal dependencies, so a voice
-pipeline can call it directly later.
+``Orchestrator.respond(text, *, signal=None, addressee=None)`` is the
+whole public surface: one user utterance in, one reply out, with gateway
+tool calls in between. It has no terminal dependencies, so a voice
+pipeline can call it directly later. The text channel calls it with
+neither and keeps its single-typist semantics.
 
 Safety property: the conversational model can never confirm an action.
 ``gateway_confirm`` is not in the tool list it is given, a model request for
@@ -13,14 +14,18 @@ isolated classifier that sees no tool results.
 
 Safety property: a pending confirmation is bound to the person who asked
 for the action, not just to this process. ``respond`` takes the voice
-layer's turn context — ``speaker_id`` (the recognised voiceprint id, or
-``None`` when the speaker is unknown) and ``addressed_to_assistant``.
-A turn that is not addressed to the assistant is ignored entirely, and a
+layer's turn context — a ``SpeakerSignal`` (the enrolled speaker id with
+its confidence and method, or unknown) and an ``Addressee`` verdict
+(addressed / elsewhere / unclear) — or the older ``speaker_id`` /
+``addressed_to_assistant`` pair, which the text channel still uses.
+A turn that is not addressed to the assistant is ignored entirely, an
+unclear turn is answered without tools, offers, or confirmations, and a
 turn from any speaker other than the one who requested the pending action
 never reaches the consent classifier and never consumes the pending
-action. Only an addressed turn from the requesting speaker can confirm.
-The text/REPL channel passes no speaker id on either side of a
-confirmation, so it keeps its single-typist semantics.
+action. Only an addressed turn from the requesting speaker, at
+sufficient confidence, can confirm. The text/REPL channel passes no
+signal on either side of a confirmation, so it keeps its single-typist
+semantics.
 """
 
 from __future__ import annotations
@@ -61,7 +66,7 @@ from .safety import (
     Mode,
     SafetyService,
 )
-from .classifier import AFFIRM, DENY, MODIFY, IntentClassifier
+from .classifier import AFFIRM, DENY, MODIFY, IntentClassifier, fast_path
 from .gateway import CONFIRM_TOOL, GatewaySession, PendingInfo, ToolDef, ToolResult
 from .memory import (
     Episode,
@@ -77,6 +82,7 @@ from .model import ModelClient
 from .prompts import load_prompt
 from .streaming import Streamer
 from .reminders import ReminderService
+from .speaker import Addressee, SpeakerSignal, TurnGate
 
 log = logging.getLogger("sutra_orchestrator")
 
@@ -253,6 +259,8 @@ class Orchestrator:
         reask_limit: int = 2,
         persona: str = "",
         spoken_reasks: bool = False,
+        speaker_enabled: bool = False,
+        speaker_confirm_confidence: float = 0.7,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._model = model
@@ -291,6 +299,8 @@ class Orchestrator:
         self._max_tool_calls = max_tool_calls
         self._history_turns = history_turns
         self._reask_limit = reask_limit
+        self._speaker_enabled = speaker_enabled
+        self._speaker_confirm_confidence = speaker_confirm_confidence
         self._now = now or (lambda: datetime.now(timezone.utc))
         self._system = load_prompt("system.md")
         self._system += _GENDER_NOTE[assistant_gender if assistant_gender in _GENDER_NOTE else "feminine"]
@@ -373,6 +383,8 @@ class Orchestrator:
             history_turns=self._history_turns,
             reask_limit=self._reask_limit,
             spoken_reasks=self._spoken_reasks,
+            speaker_enabled=self._speaker_enabled,
+            speaker_confirm_confidence=self._speaker_confirm_confidence,
             now=self._now,
         )
         child._can_start_research = self._can_start_research
@@ -480,9 +492,16 @@ class Orchestrator:
         low_confidence: bool = False,
         on_text: Callable[[str], None] | None = None,
         via: str = "text",
+        signal: SpeakerSignal | None = None,
+        addressee: Addressee | None = None,
     ) -> str:
         """One utterance in, one reply out. ``via`` is how it arrived: "text" (typed) or "voice".
 
+        ``signal`` and ``addressee`` are the voice layer's per-turn values
+        (see ``sutra_orchestrator.speaker``); when the speaker feature is
+        on they replace ``speaker_id`` / ``addressed_to_assistant``. The
+        text channel passes neither, so its single-typist semantics are
+        unchanged.
 
         ``on_text``, if given, is called with the reply's sentences as the model writes them (a voice
         client speaks them at once). The returned reply is still the whole reply.
@@ -490,10 +509,22 @@ class Orchestrator:
         # Speaker/addressee gate. This sits in front of the pending branch,
         # not just in front of new requests: a turn that is not addressed to
         # the assistant is ignored entirely — never classified, never
-        # answered, and it never consumes a pending confirmation.
-        if not addressed_to_assistant:
+        # answered, and it never consumes a pending confirmation. An
+        # unclear turn is answered without tools, offers, or confirmations.
+        effective_signal = signal if (self._speaker_enabled and signal is not None) else None
+        effective_speaker_id = (
+            effective_signal.speaker_id if effective_signal is not None else speaker_id
+        )
+        effective_addressee = (
+            addressee
+            if (self._speaker_enabled and addressee is not None)
+            else (Addressee.ADDRESSED if addressed_to_assistant else Addressee.ELSEWHERE)
+        )
+        gate = TurnGate.decide(effective_addressee)
+        if gate == "ignore":
             log.debug("ignoring turn not addressed to the assistant")
             return ""
+        answer_only = gate == "answer_only"
 
         self.last_activity = self._now()
         self._via = via
@@ -524,10 +555,20 @@ class Orchestrator:
             reply, extra_system = await self._answer_offer(text, turn)
 
         # A pending confirmation is reachable only by the speaker who asked
-        # for the action. Any other speaker's turn is handled as an ordinary
-        # turn below: it never reaches the consent classifier and the
-        # pending action stays pending until it expires.
-        if reply is None and self._pending is not None and self._speaker_may_confirm(speaker_id):
+        # for the action, at sufficient confidence, and only on an
+        # addressed turn. Any other speaker's turn is handled as an
+        # ordinary turn below: it never reaches the consent classifier and
+        # the pending action stays pending until it expires. A yes-shaped
+        # utterance from a speaker who cannot confirm is audited: the
+        # gate deliberately never classifies it, so the fast path ("yes",
+        # "yeah") is what marks it confirmation-shaped.
+        if (
+            reply is None
+            and self._pending is not None
+            and not self._speaker_may_confirm(effective_speaker_id, effective_signal)
+        ):
+            self._audit_blocked_confirmation(text, effective_signal)
+        if reply is None and self._pending is not None and not answer_only and self._speaker_may_confirm(effective_speaker_id, effective_signal):
             reply, extra_system = await self._handle_pending(text, turn)
         if reply is None:
             reply = self._interpreter_switch(text)
@@ -545,7 +586,10 @@ class Orchestrator:
         if reply is None:
             if self._interpreting:
                 extra_system = (extra_system + "\n\n" if extra_system else "") + translate.NOTE
-            reply = await self._run_turn(text, turn, extra_system, speaker_id, low_confidence, on_text)
+            reply = await self._run_turn(
+                text, turn, extra_system, effective_speaker_id, low_confidence, on_text,
+                answer_only=answer_only,
+            )
             ordinary = True
 
         if hangout_turn:
@@ -731,14 +775,67 @@ class Orchestrator:
     def reminders(self) -> ReminderService | None:
         return self._reminders
 
-    def _speaker_may_confirm(self, speaker_id: str | None) -> bool:
+    def _speaker_may_confirm(
+        self, speaker_id: str | None, signal: SpeakerSignal | None = None
+    ) -> bool:
         """True only if this turn's speaker is the one who requested the
-        pending action. Fail-closed: an unknown speaker (``None``) can never
-        confirm an action an identified speaker requested, and vice versa.
-        ``None`` matches ``None`` — the text channel, where there is no
-        voiceprint and the only typist is the owner."""
+        pending action. Fail-closed throughout.
+
+        With the speaker feature on and a signal present, the signal
+        decides: an identified speaker confirms only their own claim, at
+        or above the configured confidence; an unknown speaker may confirm
+        only a claim no identified speaker requested (today's posture for
+        unidentified channels — the text channel, or voice before any
+        identification implementation exists); and an identified speaker
+        may not confirm a claim nobody identified requested, because
+        without ``per-user-identity`` there is no proof they are the
+        owner. With the feature off, or no signal, the old rule applies:
+        the speaker ids must match, and ``None`` matches ``None`` — the
+        text channel, where there is no voiceprint and the only typist is
+        the owner.
+        """
         pending = self._pending
-        return pending is not None and speaker_id == pending.requesting_speaker_id
+        if pending is None:
+            return False
+        requesting = pending.requesting_speaker_id
+        if self._speaker_enabled and signal is not None:
+            if not signal.is_known:
+                return requesting is None
+            if requesting is None:
+                return False
+            return (
+                signal.speaker_id == requesting
+                and signal.confidence >= self._speaker_confirm_confidence
+            )
+        return speaker_id == requesting
+
+    def _audit_blocked_confirmation(
+        self, text: str, signal: SpeakerSignal | None
+    ) -> None:
+        """Record a yes-shaped utterance that could not confirm the pending claim.
+
+        Only when the speaker feature is on, and only when the utterance
+        is confirmation-shaped by the deterministic fast path ("yes",
+        "yeah") — the gate deliberately never sends a non-matching turn
+        to the consent classifier, so anything subtler cannot be known
+        to be a confirmation attempt. No audio, no profile, and no
+        utterance text beyond its shape is recorded.
+        """
+        if not self._speaker_enabled or self._pending is None:
+            return
+        if fast_path(text) != AFFIRM:
+            return
+        pending = self._pending
+        actual = signal.speaker_id if signal is not None and signal.is_known else "unknown"
+        confidence = signal.confidence if signal is not None else 0.0
+        log.info(
+            "ignored confirmation-shaped turn for pending %s: speaker %s "
+            "(confidence %.2f) is not the requesting speaker %s; claim stays pending",
+            pending.pending_id,
+            actual,
+            confidence,
+            pending.requesting_speaker_id,
+        )
 
     # -------------------------------------------------------- confirmation gate
 
@@ -836,12 +933,17 @@ class Orchestrator:
         speaker_id: str | None = None,
         low_confidence: bool = False,
         on_text: Callable[[str], None] | None = None,
+        answer_only: bool = False,
     ) -> str:
+        """Run one model turn. ``answer_only`` (an unclear addressee) means
+        the model answers without tools, offers, or follow-ups: nothing in
+        the turn may act."""
         self._speaker = speaker_id
-        followup = self._start_followup(text, extra_system, low_confidence)
+        followup = None if answer_only else self._start_followup(text, extra_system, low_confidence)
         try:
             return await self._run_turn_inner(
-                text, turn, extra_system, speaker_id, followup, on_text, low_confidence
+                text, turn, extra_system, speaker_id, followup, on_text, low_confidence,
+                answer_only=answer_only,
             )
         finally:
             if followup is not None and not followup.done():
@@ -876,6 +978,7 @@ class Orchestrator:
         followup: "asyncio.Future[OpenOffer | None] | None",
         on_text: Callable[[str], None] | None = None,
         low_confidence: bool = False,
+        answer_only: bool = False,
     ) -> str:
         memories = await self._recall(text)
         system = self._system
@@ -940,7 +1043,8 @@ class Orchestrator:
                 system=system if turn.tools else first_system,  # humor only before any tool call
                 messages=self._flat_history() + msgs,
                 tools=tools,
-                **({"allow_tools": False} if self._interpreting else {}),  # text to translate is never a command
+                **({"allow_tools": False} if (self._interpreting or answer_only) else {}),
+                # text to translate is never a command; an unclear turn is never an action
             )
             log.debug("model call took %.2fs", time.perf_counter() - started)
             msgs.append({"role": "assistant", "content": response.content})

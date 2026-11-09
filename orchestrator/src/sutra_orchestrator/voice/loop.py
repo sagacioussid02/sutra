@@ -22,6 +22,7 @@ from ..classifier import AFFIRM, DENY
 from ..hangout import HangoutReply
 from ..i18n import detect, heard as heard_line, localize
 from ..safety import Mode, SafetyService
+from ..speaker import Addressee, SpeakerService, SpeakerSignal
 from ..orchestrator import Orchestrator
 from .types import Engines, Recorder, Transcript, VoiceError
 
@@ -154,6 +155,7 @@ class VoiceSession:
         self._barge_in = settings.barge_in
         self._safety: SafetyService | None = None
         self._wake = None  # WakeMatcher, attached by the caller
+        self._speaker_service: SpeakerService | None = None  # attached by the caller
         self._auth = None  # AuthService, attached by the caller
         self._wake_task: asyncio.Future | None = None
         self._last_cut = False
@@ -181,6 +183,15 @@ class VoiceSession:
     def attach_wake(self, matcher) -> None:
         """Also listen locally for a wake phrase while idle (audio goes nowhere until it is heard)."""
         self._wake = matcher
+
+    def attach_speaker(self, service: SpeakerService) -> None:
+        """Attach speaker identification and addressee detection.
+
+        The service supplies the per-utterance signal and verdict the
+        orchestrator's gate consumes. With no service attached (or the
+        feature off), turns carry no signal and behave as before.
+        """
+        self._speaker_service = service
 
     def _off(self) -> bool:
         return self._safety is not None and self._safety.mode is Mode.OFF
@@ -412,6 +423,8 @@ class VoiceSession:
     async def _conversation(self, announce: bool = False, carry: Transcript | None = None) -> None:
         """Take turns. In conversation mode keep listening after each reply until you go quiet."""
         try:
+            if self._speaker_service is not None:
+                self._speaker_service.note_conversation_opened()
             if announce and not await self._maybe_offer():
                 if not await self._maybe_timely():
                     await self._maybe_interest_offer()
@@ -430,6 +443,8 @@ class VoiceSession:
                 if not (answered and self._s.conversation and self._recorder.auto_stop):
                     return
         finally:
+            if self._speaker_service is not None:
+                self._speaker_service.note_conversation_closed()
             self._recorder.release()  # nothing is captured while idle
             if self._offer is not None:  # asked, but got no answer: keep it for later
                 self._offer.declined = True
@@ -483,7 +498,9 @@ class VoiceSession:
         started = time.perf_counter()
         heard = await self.engines.transcriber.transcribe(wav)
         self._stt_seconds = time.perf_counter() - started
-        return heard
+        # The audio rides with the transcript so the speaker service can
+        # identify who spoke; without it the signal is unknown.
+        return Transcript(heard.text, heard.confidence, wav)
 
     async def _stop_listening(self, listen: asyncio.Future | None) -> Transcript | None:
         """Abort a recording in progress (so we can speak). Returns anything already heard."""
@@ -521,6 +538,12 @@ class VoiceSession:
             return True, None
 
         lane = self._awaiting or self._fg
+        signal, addressee = await self._speaker_turn(transcript, text)
+        if addressee is Addressee.ELSEWHERE:
+            # Side conversation in an open session: no reply, no tools, no
+            # offers, and the pending action is untouched. The conversation
+            # stays open — the room keeps talking.
+            return True, None
         if lane.pending is not None:
             if not await self._confirmation_ok(lane, text, transcript.confidence):
                 return True, None
@@ -531,7 +554,8 @@ class VoiceSession:
 
         asked_at = time.perf_counter()
         reply, interrupted = await self._respond(
-            lane, text, low_confidence=transcript.confidence < self._s.min_confidence
+            lane, text, low_confidence=transcript.confidence < self._s.min_confidence,
+            signal=signal, addressee=addressee,
         )
         if reply is not None:
             think = time.perf_counter() - asked_at
@@ -579,6 +603,23 @@ class VoiceSession:
             self._out(f"  pending: {pending.description}")
             self._out(f"  expires: {pending.expires_at.astimezone().strftime('%H:%M:%S')}")
 
+    async def _speaker_turn(
+        self, transcript: Transcript, text: str
+    ) -> tuple[SpeakerSignal | None, Addressee | None]:
+        """The speaker signal and addressee verdict for this utterance.
+
+        (None, None) when no speaker service is attached or the feature
+        is off — the orchestrator then behaves exactly as before.
+        """
+        service = self._speaker_service
+        if service is None or not service.enabled:
+            return None, None
+        signal = service.identify(transcript.wav)
+        addressee = await service.classify_utterance(
+            text, signal, push_to_talk=self._s.activation == "button"
+        )
+        return signal, addressee
+
     async def _confirmation_ok(self, lane: Orchestrator, text: str, confidence: float) -> bool:
         """Gate a reply to a held action. A doubtful transcript never reaches respond()."""
         if text and confidence >= self._s.min_confidence:
@@ -599,17 +640,25 @@ class VoiceSession:
     # ------------------------------------------------------------- doing the work
 
     async def _respond(
-        self, lane: Orchestrator, text: str, *, low_confidence: bool = False
+        self, lane: Orchestrator, text: str, *, low_confidence: bool = False,
+        signal: SpeakerSignal | None = None, addressee: Addressee | None = None,
     ) -> tuple[str | None, Transcript | None]:
         """Run the request. Returns (reply or None if detached, utterance that interrupted it)."""
         if not self._recorder.auto_stop:
-            return await self._respond_with_filler(lane, text, low_confidence), None
+            return await self._respond_with_filler(
+                lane, text, low_confidence, signal=signal, addressee=addressee
+            ), None
 
         loop = asyncio.get_running_loop()
         sentences: asyncio.Queue[str] = asyncio.Queue()
         stream = self._s.stream
         extra = {"on_text": sentences.put_nowait} if stream else {}
-        work = asyncio.ensure_future(lane.respond(text, low_confidence=low_confidence, via="voice", **extra))
+        work = asyncio.ensure_future(
+            lane.respond(
+                text, low_confidence=low_confidence, via="voice",
+                signal=signal, addressee=addressee, **extra,
+            )
+        )
         started = loop.time()
         self._first_words_at = None
         timers: list[tuple[float, str]] = []
@@ -723,7 +772,8 @@ class VoiceSession:
         return line
 
     async def _respond_with_filler(
-        self, lane: Orchestrator, text: str, low_confidence: bool = False
+        self, lane: Orchestrator, text: str, low_confidence: bool = False,
+        signal: SpeakerSignal | None = None, addressee: Addressee | None = None,
     ) -> str:
         """Press-Enter mode cannot listen while working, so only the short filler applies."""
         started = False
@@ -739,7 +789,10 @@ class VoiceSession:
 
         task = asyncio.create_task(filler())
         try:
-            return await lane.respond(text, low_confidence=low_confidence, via="voice")
+            return await lane.respond(
+                text, low_confidence=low_confidence, via="voice",
+                signal=signal, addressee=addressee,
+            )
         finally:
             if started:
                 try:

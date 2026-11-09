@@ -17,6 +17,9 @@ class Transcript:
     text: str
     # 0..1. Engines that cannot score a transcript report 1.0.
     confidence: float = 1.0
+    # The captured audio, when the loop still has it: the speaker service
+    # identifies from this. Transcripts from other sources carry b''.
+    wav: bytes = b""
 
 
 class Transcriber(Protocol):

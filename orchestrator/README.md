@@ -670,6 +670,22 @@ Memory remembers what you said one sentence at a time. Distillation looks across
 
 **Schedule and cost:** about once a day while you are away, at most `SUTRA_DISTILL_CALLS` model calls a day; a backlog drains over several passes. `/distill` shows the last pass and where it got to, `/distill run` does one now, `/distill off` stops the schedule. After one productive pass you get a single notice, not one per item.
 
+## Speaker identification and addressee detection
+
+Say the assistant's name once to open a conversation, then just talk: no repeated wake word. Sutra works out who is speaking and whether the words are for it.
+
+**Turn it on** (off by default): `SUTRA_SPEAKER=on`. With it off, utterances carry no signal and confirmations behave exactly as before.
+
+**How it decides.** Each utterance carries a speaker signal — an enrolled speaker id with a confidence and the method that produced it, or `unknown` — and is classified as addressed to the assistant, addressed elsewhere, or unclear, from the utterance, the signal, and the conversation state. The rule is asymmetric on purpose: acting (a tool call, a confirmation, a write) needs *addressed*; answering may proceed on *addressed* or *unclear*; speech addressed elsewhere never triggers a reply, an offer, or a tool. Push-to-talk counts as addressed, and so does the turn that opened the conversation. With no conversation open, nothing is addressed until the name is spoken.
+
+**Confirmations.** A pending action is confirmed only by the speaker it is bound to, at or above `SUTRA_SPEAKER_CONFIRM_CONFIDENCE` (default 0.7). A yes-shaped utterance from a different or unknown speaker is ignored for that claim and noted in the log; the claim stays pending. A claim nobody identified requested keeps today's posture: an unknown voice may still confirm it, so voice keeps working before any identification exists.
+
+**Enrolment.** Enrolment is deliberate and per person: start it explicitly, record a few short samples, and the profile is stored locally (owner-only) under a label you choose, mapped to a user id. Nobody is enrolled by being overheard, profiles are never sent to the model, and deleting a profile takes effect on the next utterance. The default scope is the owner; enrolling anyone else is a separate deliberate act per person.
+
+**Identification, honestly.** No identification implementation is chosen yet: choosing between a local embedding model and the transcription provider's speaker features needs latency and accuracy measured on the owner's voice, on a real setup. Until then the shipped identifier returns `unknown` for every voice — the addressee decision still works from text and conversation state, and confirmations keep the posture above. A recording of the owner's voice remains a recorded risk: identification strengthens the confirmation gate, it does not replace the confirmation itself.
+
+Settings: `SUTRA_SPEAKER`, `SUTRA_SPEAKER_DIR`, `SUTRA_SPEAKER_CONFIRM_CONFIDENCE`.
+
 ## Propose a patch (draft a missing capability)
 
 When nothing Sutra has can do what you asked, it can offer to draft the missing code. It starts only after your yes, runs in the background, and ends with a branch for you to review. It never merges, pushes, installs or applies anything. Off by default: set `SUTRA_PATCHES=on` (text and voice; in voice the result is announced like a research result, and `/patches` is a text-console command).

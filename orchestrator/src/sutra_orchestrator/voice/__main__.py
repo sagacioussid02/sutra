@@ -32,6 +32,7 @@ from ..life import LifeService, LifeStore
 from ..feeds import build_feeds
 from ..hangout import HangoutService, HttpGroupClient, parse_voices
 from ..safety import Mode, SafetyService
+from ..speaker import build_speaker
 from ..auth import build_auth
 from .wake import WakeMatcher
 from ..reminders import ReminderScheduler, ReminderService, ReminderStore
@@ -133,6 +134,7 @@ async def _run(verbose: bool) -> int:
         built_events = build_events(config, offers, _memory_dir)
         events = built_events[0] if built_events else None
         event_listener = built_events[1] if built_events else None
+        speaker = build_speaker(config, model, _memory_dir)
         agents = None
         if config.agents_enabled:
             agents = build_agent_service(
@@ -213,6 +215,8 @@ async def _run(verbose: bool) -> int:
             reask_limit=config.reask_limit,
             persona=load_prompt("persona.md").format(name=vc.assistant_name),
             spoken_reasks=True,
+            speaker_enabled=config.speaker_enabled,
+            speaker_confirm_confidence=config.speaker_confirm_confidence,
         )
         built_world = build_worldstate(
             config,
@@ -272,6 +276,8 @@ async def _run(verbose: bool) -> int:
             background_tasks.append(watch_task("events", events.start_task()))
         session.attach_safety(safety)
         session.attach_auth(auth)
+        if speaker is not None:
+            session.attach_speaker(speaker)
         if config.activation == "wake":
             session.attach_wake(WakeMatcher(config.wake_words))
         if distill is not None:
