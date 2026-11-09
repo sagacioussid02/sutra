@@ -19,7 +19,7 @@ from sutra_orchestrator.dogfood.graders import (
     grade,
     validate,
 )
-from sutra_orchestrator.dogfood.harness import RunOptions, load_batteries, run
+from sutra_orchestrator.dogfood.harness import BatteriesError, RunOptions, load_batteries, run
 from sutra_orchestrator.dogfood.profile import Profile, ProfileError, guard, new_sandbox
 from sutra_orchestrator.dogfood.runner import Observation, run_scenario
 from sutra_orchestrator.dogfood.scenario import Scenario, ScenarioError
@@ -147,6 +147,30 @@ def test_the_shipped_batteries_load_and_cover_every_area():
             validate(s)
     drift = next(s for b in batteries for s in b.scenarios if s.capability == "drift")
     assert len(drift.user_steps) >= 38
+
+
+# ---------------------------------------------------------------- no silent partial runs
+
+
+async def test_a_run_pointed_at_a_fresh_directory_fails_instead_of_passing_on_templates_alone(tmp_path):
+    root = tmp_path / "fresh"  # no batteries directory, no corpus: a misconfigured SUTRA_DOGFOOD_DIR
+    with pytest.raises(BatteriesError, match="no fixed batteries loaded"):
+        await run(RunOptions(out_dir=root, seed=1), new_sandbox(), ScriptedModel())
+    assert not (root / records.SCORECARD).exists()
+
+
+async def test_a_run_with_an_empty_batteries_directory_fails_loudly(tmp_path):
+    root = tmp_path / "dogfood"
+    (root / "batteries").mkdir(parents=True)
+    with pytest.raises(BatteriesError, match="SUTRA_DOGFOOD_DIR"):
+        await run(RunOptions(out_dir=root, seed=1), new_sandbox(), ScriptedModel())
+
+
+async def test_the_report_lists_the_batteries_it_loaded(tmp_path):
+    report = await run(RunOptions(out_dir=out_dir(tmp_path), seed=3, write=False), new_sandbox(), ScriptedModel())
+    line = next(l for l in report.text().splitlines() if "batteries:" in l)
+    for name in ("reminders", "confirmations", "offers"):
+        assert name in line
 
 
 # ---------------------------------------------------------------- the batteries against the real pipeline

@@ -23,7 +23,7 @@ from pathlib import Path
 
 from ..errors import OrchestratorError
 from .config import ORCHESTRATOR_DIR, load_dogfood_config
-from .harness import RunOptions, run
+from .harness import BatteriesError, RunOptions, run
 from .profile import ProfileError, new_sandbox
 from .records import import_lessons, render_scorecard
 from .stubs import ScriptedModel
@@ -75,7 +75,7 @@ async def _run(args: argparse.Namespace) -> int:
     )
     try:
         report = await run(options, profile, model, budget=cfg.call_budget)
-    except ProfileError as exc:
+    except (ProfileError, BatteriesError) as exc:
         print(f"aborted: {exc}", file=sys.stderr)
         return 2
     finally:

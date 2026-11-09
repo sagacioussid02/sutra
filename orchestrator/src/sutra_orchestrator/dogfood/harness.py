@@ -21,6 +21,10 @@ BATTERIES = "batteries"
 GENERATED_VERSION = 1  # bump when a template's wording or expectations change
 
 
+class BatteriesError(ValueError):
+    """A run was asked to grade without the fixed batteries it exists to run."""
+
+
 @dataclass
 class RunOptions:
     out_dir: Path
@@ -43,6 +47,7 @@ class RunReport:
     seed: int
     results: list[ScenarioResult]
     battery_versions: dict[str, int]
+    battery_counts: dict[str, int] = field(default_factory=dict)
     dataset: records.DatasetUpdate | None = None
     promoted: list[str] = field(default_factory=list)
     lessons: list[dict[str, Any]] = field(default_factory=list)
@@ -59,6 +64,11 @@ class RunReport:
         skipped = [r for r in self.results if r.status == "skipped"]
         not_run = [r for r in self.results if r.status == "not_run"]
         lines = [f"Dogfood run {self.run_id} ({self.mode}, seed {self.seed})"]
+        if self.battery_counts:
+            loaded = ", ".join(f"{name} ({count})" for name, count in self.battery_counts.items())
+            lines.append(f"  batteries: {loaded}")
+        else:
+            lines.append("  WARNING: no fixed batteries loaded; only generated scenarios and the eval corpus ran.")
         for cap in CAPABILITIES:
             mine = [r for r in graded if r.scenario.capability == cap]
             if mine:
@@ -109,6 +119,18 @@ def load_batteries(root: Path, names: tuple[str, ...] = ()) -> list[Battery]:
     return batteries
 
 
+def _no_batteries_message(out_dir: Path) -> str:
+    batteries_dir = out_dir / BATTERIES
+    state = "does not exist" if not batteries_dir.is_dir() else "contains no battery files"
+    return (
+        f"no fixed batteries loaded: {batteries_dir} {state}. A run needs the fixed battery "
+        "JSON files (reminders, confirmations, offers, ...) in a "
+        f"'{BATTERIES}' directory under the dogfood output directory; without them it would "
+        "grade only generated scenarios and report a misleading pass. "
+        f"Check SUTRA_DOGFOOD_DIR (the output directory in use is {out_dir})."
+    )
+
+
 def _run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(2)
 
@@ -123,9 +145,16 @@ async def run(options: RunOptions, profile: Profile, model: Any, *, budget: int 
     if not options.batteries or "generated" in options.batteries:
         planned += [(s, False) for s in generate(seed, options.per_template)]
         versions["generated"] = GENERATED_VERSION
+    corpus: list[Scenario] = []
     if options.include_corpus:
         ran = {s.fingerprint() for s, _ in planned}
-        planned += [(s, True) for s in records.load_corpus(options.out_dir) if s.fingerprint() not in ran]
+        corpus = [s for s in records.load_corpus(options.out_dir) if s.fingerprint() not in ran]
+    if not batteries and not options.batteries and not corpus:
+        # No fixed batteries and no promoted corpus cases either: the run would grade
+        # only generated templates and still report a pass. Refuse, loudly -- a fresh
+        # or misconfigured output directory must never look like a green run.
+        raise BatteriesError(_no_batteries_message(options.out_dir))
+    planned += [(s, True) for s in corpus]
     for scenario, _ in planned:
         validate(scenario)
 
@@ -151,6 +180,7 @@ async def run(options: RunOptions, profile: Profile, model: Any, *, budget: int 
 
     report = RunReport(
         run_id=_run_id(), mode=options.mode, seed=seed, results=results, battery_versions=versions,
+        battery_counts={b.name: len(b.scenarios) for b in batteries},
         model_calls=getattr(counted, "calls", 0), budget=budget,
     )
     if options.write:
