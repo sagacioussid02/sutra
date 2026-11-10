@@ -698,3 +698,28 @@ When nothing Sutra has can do what you asked, it can offer to draft the missing 
 - **Reviewing:** `/patches` lists drafts, `/patches show <id>` prints the (untrusted) summary, files, test outcome and diff stat, then `git diff main...sutra/patch-<id>` to read it and `git merge sutra/patch-<id>` if you agree. `/patches discard <id|all>` removes drafts.
 
 Settings: `SUTRA_PATCHES`, `SUTRA_PATCHES_DIR`, `_MAX_TOOL_CALLS`, `_RUN_TOKENS`, `_TIMEOUT`, `_DAILY_RUNS`, `_DAILY_TOKENS`, `_TEST_COMMAND`, `_TEST_DIR`, `_TEST_TIMEOUT`.
+
+## Dogfood harness (targeted, graded conversations)
+
+The unit tests prove each part against fakes. The dogfood harness asks the next question: does the assembled assistant do the right thing across a whole conversation? It holds scripted conversations with Sutra itself through the same `Orchestrator.respond` pipeline the text channel uses, grades them, and keeps score, so "is it ready for dedicated hardware?" can be answered from a trend instead of a feeling.
+
+```sh
+.venv/bin/python -m sutra_orchestrator.dogfood run                 # scripted model: free, no key, deterministic
+.venv/bin/python -m sutra_orchestrator.dogfood run --live --rubric # real model, within SUTRA_DOGFOOD_CALL_BUDGET
+.venv/bin/python -m sutra_orchestrator.dogfood run --battery confirmations --seed 7 --no-write
+.venv/bin/python -m sutra_orchestrator.dogfood scorecard
+.venv/bin/python -m sutra_orchestrator.dogfood import-lessons data   # your SUTRA_LESSONS_DIR
+```
+
+- **A sandbox, always.** Every scenario gets fresh throwaway stores under a new temporary directory, a fake clock the scenario moves, and a recording gateway: read-only tools answer from synthetic fixtures, mutating tools come back as pending actions exactly like the real gateway's confirm-first tier, and `gateway_confirm` is recorded as an execution and runs nothing. Before the first turn the run checks it is the sandbox profile and that no store overlaps a real one, and aborts otherwise. Nothing is spoken, sent, booked or paid, and no real memory, episode or finance data is read.
+- **Scripted or live.** The default scripted model answers every turn with "Okay." and labels every unsettled confirmation reply `unclear`, so the batteries that need no model (reminder parsing and firing across DST and restarts, the confirmation gate's speaker and addressee binding, the offer caps) run in seconds for free. `--live` uses the real models and also runs the answers, memory and 40-turn drift batteries.
+- **Expectations are written first.** Each scenario in `evals/dogfood/batteries/*.json` declares its turns, each user turn's `speech_act` (request / chat / rhetorical / joke / aside) and `addressee` (sutra / other-person / unclear), and the checks it must pass. Templates in `dogfood/generate.py` write fresh wordings each run with their labels; `--seed` reproduces one.
+- **Two grading tiers that never mix.** Deterministic checks in code (did it fire exactly once at the right instant, did a non-yes execute nothing, did offers stay under the cap) are pass/fail and the trend of record. `--rubric` adds a grader model's verdict on tone, offer timing and answer quality, stored with the rubric version, grader model and rationale. A rubric pass never rescues a failed check. A false affirmation is reported as CRITICAL.
+- **What a run leaves in `evals/dogfood/`.** `dataset.jsonl` + `manifest.json`: every labelled turn once, versioned (the version moves only when new turns arrive), with per-label counts and a checksum; a lint keeps out anything that looks like an email, a long number, or a word in `SUTRA_DOGFOOD_PERSONAL_MARKERS`. `corpus/`: every scenario that ever failed, verbatim, run on every later run and never removed for passing. `scorecard.jsonl`: one append-only line per run per capability. `lesson_proposals.jsonl`: drafts for behaviour-shaped failures that recur across `SUTRA_DOGFOOD_LESSON_RUNS` runs.
+- **Lessons stay proposals.** The harness never writes your lesson store and has no way to approve anything. `import-lessons` is yours to run; it adds the drafts as `proposed`, and approval and the safety probes work exactly as for any other lesson. Bug-shaped failures (firing, caps, the gate) are listed in the run report for a normal fix and never become lessons.
+- **What it cannot prove.** Simulation says nothing about the living room: microphone pickup, real speaker identification, real event sources. The scorecard says what simulation proved, labelled as such; your own use closes the rest.
+- **The standing rule.** The confirmation gate before an irreversible action is graded here, never trained here. It stays rule-based, held to zero false affirmations; nothing this harness produces changes its rules.
+
+Scheduled runs are not enabled yet: they wait until the first runs' grading has been checked by hand against the transcripts.
+
+Settings: `SUTRA_DOGFOOD_DIR`, `SUTRA_DOGFOOD_CALL_BUDGET`, `SUTRA_DOGFOOD_LESSON_RUNS`, `SUTRA_DOGFOOD_PERSONAL_MARKERS`, `SUTRA_DOGFOOD_GRADER_MODEL`.

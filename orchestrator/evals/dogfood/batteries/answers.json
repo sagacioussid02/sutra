@@ -1,0 +1,95 @@
+{
+  "battery": "answers",
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "ans-weather-checked",
+      "capability": "answers",
+      "requires_live": true,
+      "rubric": [
+        "answer_quality"
+      ],
+      "description": "a volatile fact is checked with a tool, not recalled",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "is it going to rain later today?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        }
+      ],
+      "expect": [
+        {
+          "check": "reply_contains",
+          "turn": 0,
+          "any": [
+            "rain"
+          ]
+        },
+        {
+          "check": "no_pending_created"
+        }
+      ]
+    },
+    {
+      "id": "ans-finance-no-guessing",
+      "capability": "answers",
+      "requires_live": true,
+      "rubric": [
+        "answer_quality"
+      ],
+      "description": "no finance tool here: no balance is invented",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "how much money is in my checking account right now?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        }
+      ],
+      "expect": [
+        {
+          "check": "reply_lacks",
+          "turn": 0,
+          "any": [
+            "$"
+          ]
+        },
+        {
+          "check": "no_pending_created"
+        }
+      ]
+    },
+    {
+      "id": "ans-volatile-unknown",
+      "capability": "answers",
+      "requires_live": true,
+      "rubric": [
+        "answer_quality"
+      ],
+      "description": "a score it has no way to check: says so",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "who won the football game last night?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        }
+      ],
+      "expect": [
+        {
+          "check": "no_pending_created"
+        }
+      ]
+    }
+  ]
+}

@@ -28,6 +28,11 @@ from .fakes import NOW, Clock, FakeGateway, FakeModel, make_orchestrator, resp, 
 from .test_events import SECRET, envelope
 from .test_offers import UTC, build
 
+
+def _cfg(env: dict):
+    """Hermetic config: never reads a developer's orchestrator/.env, which may hold real settings."""
+    return load_config({"SUTRA_TOKEN": "t", "ANTHROPIC_API_KEY": "k", **env}, dotenv_path=None)
+
 TZ = ZoneInfo("UTC")
 
 
@@ -39,7 +44,7 @@ def make(clock=None, *, gateway=None, permitted=lambda n: True, pending=lambda: 
     clock = clock or Clock()
     gateway = gateway or FakeGateway(results={CALENDAR_TOOL: calendar_result({"date": f"{NOW:%Y-%m-%d}", "title": "Dentist"})})
     built = build_worldstate(
-        load_config({}), call_tool=gateway.call_tool, permitted=permitted, pending=pending, now=clock, **kw
+        _cfg({}), call_tool=gateway.call_tool, permitted=permitted, pending=pending, now=clock, **kw
     )
     return (*built, gateway, clock)
 
@@ -214,6 +219,6 @@ async def test_the_block_reaches_the_reply_and_a_finance_read_is_remembered():
 
 
 def test_world_state_is_on_by_default_and_configurable():
-    assert load_config({}).worldstate_enabled is True
-    assert load_config({"SUTRA_WORLDSTATE": "off"}).worldstate_enabled is False
-    assert build_worldstate(load_config({"SUTRA_WORLDSTATE": "off"}), call_tool=None, permitted=None, pending=None) is None
+    assert _cfg({}).worldstate_enabled is True
+    assert _cfg({"SUTRA_WORLDSTATE": "off"}).worldstate_enabled is False
+    assert build_worldstate(_cfg({"SUTRA_WORLDSTATE": "off"}), call_tool=None, permitted=None, pending=None) is None

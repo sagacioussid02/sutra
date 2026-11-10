@@ -10,12 +10,14 @@ import re
 from pathlib import Path
 
 from sutra_orchestrator.config import load_config
+from sutra_orchestrator.dogfood.config import load_dogfood_config
 from sutra_orchestrator.voice.config import load_voice_config
 
 EXAMPLE = Path(__file__).parent.parent / ".env.example"
 CONFIG_FILES = [
     Path(__file__).parent.parent / "src" / "sutra_orchestrator" / "config.py",
     Path(__file__).parent.parent / "src" / "sutra_orchestrator" / "voice" / "config.py",
+    Path(__file__).parent.parent / "src" / "sutra_orchestrator" / "dogfood" / "config.py",
 ]
 
 _NAME_RE = re.compile(r"^#?\s*([A-Z][A-Z0-9_]*)\s*=")
@@ -78,6 +80,9 @@ def test_example_values_load_cleanly():
     assert config.agent_daily_tokens == 60_000
     assert config.idle_run_tokens == 3000
     assert config.reminders_tz == "America/Denver"
+
+    dogfood = load_dogfood_config(env)
+    assert dogfood.out_dir.name == "dogfood" and dogfood.call_budget == 400 and dogfood.lesson_runs == 3
 
     voice = load_voice_config(env=env, dotenv_path=None)
     assert voice.stt_model == "gpt-4o-transcribe"

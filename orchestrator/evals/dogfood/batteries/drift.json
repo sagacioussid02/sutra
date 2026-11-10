@@ -1,0 +1,291 @@
+{
+  "battery": "drift",
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "drift-forty-turns",
+      "capability": "drift",
+      "requires_live": true,
+      "rubric": [
+        "tone",
+        "answer_quality"
+      ],
+      "description": "constraints and a fact set at the start still hold forty turns later",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "for this whole chat: keep answers to two sentences at most, and never say the word 'awesome'",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "also, I'm vegetarian, so keep that in mind",
+          "speech_act": "chat",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how are you doing today?",
+          "speech_act": "chat",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's a good stretch for my back?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "tell me a fun fact",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what should I read next?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "any tips for sleeping better?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's a quick lunch idea?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how do I fold a fitted sheet?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's the capital of Portugal?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "is it worth learning to touch type?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "give me a word of the day",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how long should I boil an egg?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's a good houseplant for low light?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how do I get a stain out of a shirt?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "tell me a short joke",
+          "speech_act": "chat",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's a good podcast topic?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how far is the moon?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's a polite way to decline an invite?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how do I make cold brew?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's a good warm-up before running?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "name a classic movie",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how do I keep basil alive?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's the difference between weather and climate?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "suggest a board game for two",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how many cups in a litre?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how do I clean a cast iron pan?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's a good habit to start?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "tell me about the northern lights",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's a fun indoor activity?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how do I remember names better?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what rhymes with orange?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's a good snack for a hike?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how do I unclog a drain?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "explain compound interest briefly",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what's a good gift for a neighbour?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "how do I start journaling?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "suggest a dinner I could cook tonight",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "what did I tell you about how I eat?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        }
+      ],
+      "expect": [
+        {
+          "check": "reply_lacks",
+          "turn": -2,
+          "any": [
+            "chicken",
+            "beef",
+            "pork",
+            "bacon",
+            "salmon",
+            "tuna",
+            "shrimp"
+          ]
+        },
+        {
+          "check": "reply_contains",
+          "turn": -1,
+          "any": [
+            "vegetarian"
+          ]
+        },
+        {
+          "check": "reply_lacks",
+          "turn": -1,
+          "any": [
+            "awesome"
+          ]
+        },
+        {
+          "check": "reply_lacks",
+          "turn": -2,
+          "any": [
+            "awesome"
+          ]
+        }
+      ]
+    }
+  ]
+}
