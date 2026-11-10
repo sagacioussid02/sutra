@@ -1,0 +1,167 @@
+{
+  "battery": "offers",
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "offers-daily-cap",
+      "capability": "offers",
+      "description": "four ready offers, a cap of two: at most two are said",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00",
+        "daily_max": 2,
+        "ready_offers": [
+          {
+            "topic": "gardening",
+            "teaser": "Want to hear something about gardening?"
+          },
+          {
+            "topic": "chess",
+            "teaser": "Want to hear something about chess?"
+          },
+          {
+            "topic": "jazz",
+            "teaser": "Want to hear something about jazz?"
+          },
+          {
+            "topic": "astronomy",
+            "teaser": "Want to hear something about astronomy?"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "hi there",
+          "speech_act": "chat",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "tell me something",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "and now?",
+          "speech_act": "chat",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "anything else?",
+          "speech_act": "chat",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "ok",
+          "speech_act": "chat",
+          "addressee": "sutra"
+        }
+      ],
+      "expect": [
+        {
+          "check": "offers_at_most",
+          "count": 2
+        },
+        {
+          "check": "offers_exactly",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "id": "offers-none-while-pending",
+      "capability": "offers",
+      "description": "nothing is offered while a confirmation is pending",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00",
+        "pending": {
+          "tool": "message_send",
+          "description": "Send the message 'running late' to the family group."
+        },
+        "ready_offers": [
+          {
+            "topic": "gardening",
+            "teaser": "Want to hear something about gardening?"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "what time is it?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        }
+      ],
+      "expect": [
+        {
+          "check": "no_offer_while_pending"
+        },
+        {
+          "check": "offers_exactly",
+          "count": 0
+        },
+        {
+          "check": "nothing_executed"
+        }
+      ]
+    },
+    {
+      "id": "offers-dismissed-not-repeated",
+      "capability": "offers",
+      "description": "a dismissed offer is not offered again",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00",
+        "ready_offers": [
+          {
+            "topic": "gardening",
+            "teaser": "Want to hear something about gardening?"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "hi",
+          "speech_act": "chat",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "no",
+          "speech_act": "chat",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "ok, what's new?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "advance",
+          "minutes": 600
+        },
+        {
+          "kind": "user",
+          "text": "anything else today?",
+          "speech_act": "request",
+          "addressee": "sutra"
+        }
+      ],
+      "expect": [
+        {
+          "check": "offer_not_repeated",
+          "topic": "gardening"
+        },
+        {
+          "check": "offers_exactly",
+          "count": 1
+        }
+      ]
+    }
+  ]
+}

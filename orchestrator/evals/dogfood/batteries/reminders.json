@@ -1,0 +1,273 @@
+{
+  "battery": "reminders",
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "rem-dst-next-morning",
+      "capability": "reminders",
+      "description": "set the night before clocks fall back, fires at 9am standard time",
+      "setup": {
+        "start": "2026-11-01T02:00:00+00:00",
+        "tz": "America/New_York"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "remind me tomorrow at 9am to water the plants",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "advance",
+          "minutes": 721
+        },
+        {
+          "kind": "advance",
+          "minutes": 60
+        }
+      ],
+      "expect": [
+        {
+          "check": "reminder_set",
+          "at": "2026-11-01T14:00:00+00:00"
+        },
+        {
+          "check": "reminder_fired",
+          "at": "2026-11-01T14:00:00+00:00",
+          "times": 1,
+          "late": false
+        },
+        {
+          "check": "fired_total",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "rem-dst-relative-across-fallback",
+      "capability": "reminders",
+      "description": "'in 3 hours' across the fall-back hour is three real hours",
+      "setup": {
+        "start": "2026-11-01T03:30:00+00:00",
+        "tz": "America/New_York"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "remind me in 3 hours to take the bread out",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "advance",
+          "minutes": 181
+        }
+      ],
+      "expect": [
+        {
+          "check": "reminder_set",
+          "at": "2026-11-01T06:30:00+00:00"
+        },
+        {
+          "check": "reminder_fired",
+          "at": "2026-11-01T06:30:00+00:00",
+          "times": 1,
+          "late": false
+        }
+      ]
+    },
+    {
+      "id": "rem-missed-fire-recovery",
+      "capability": "reminders",
+      "description": "due while the scheduler was down: fires once on restart, marked late",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00",
+        "tz": "America/New_York"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "remind me in 20 minutes to check the oven",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "scheduler_stop"
+        },
+        {
+          "kind": "advance",
+          "minutes": 60
+        },
+        {
+          "kind": "scheduler_start"
+        },
+        {
+          "kind": "advance",
+          "minutes": 30
+        },
+        {
+          "kind": "scheduler_stop"
+        },
+        {
+          "kind": "scheduler_start"
+        }
+      ],
+      "expect": [
+        {
+          "check": "reminder_fired",
+          "at": "2026-11-03T14:20:00+00:00",
+          "times": 1,
+          "late": true
+        },
+        {
+          "check": "fired_total",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "rem-exactly-once-across-restarts",
+      "capability": "reminders",
+      "description": "fired on time, then two restarts: still exactly one delivery",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00",
+        "tz": "America/New_York"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "remind me in 10 minutes to feed the cat",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "advance",
+          "minutes": 11
+        },
+        {
+          "kind": "scheduler_stop"
+        },
+        {
+          "kind": "scheduler_start"
+        },
+        {
+          "kind": "sweep"
+        },
+        {
+          "kind": "scheduler_stop"
+        },
+        {
+          "kind": "advance",
+          "minutes": 5
+        },
+        {
+          "kind": "scheduler_start"
+        }
+      ],
+      "expect": [
+        {
+          "check": "reminder_fired",
+          "at": "2026-11-03T14:10:00+00:00",
+          "times": 1,
+          "late": false
+        },
+        {
+          "check": "fired_total",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "rem-unparseable-asks",
+      "capability": "reminders",
+      "description": "no time it can pin down: asks, sets nothing",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00",
+        "tz": "America/New_York"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "remind me sometime to call the bank",
+          "speech_act": "request",
+          "addressee": "sutra"
+        }
+      ],
+      "expect": [
+        {
+          "check": "no_reminder_set"
+        },
+        {
+          "check": "reply_contains",
+          "turn": 0,
+          "any": [
+            "couldn't work out",
+            "try something like"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rem-bare-hour-evening",
+      "capability": "reminders",
+      "description": "'at 5' with no am/pm resolves to the evening once the user says so",
+      "setup": {
+        "start": "2026-11-03T14:00:00+00:00",
+        "tz": "America/New_York"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "remind me at 5 to call Sam",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "user",
+          "text": "evening",
+          "speech_act": "request",
+          "addressee": "sutra"
+        }
+      ],
+      "expect": [
+        {
+          "check": "reminder_set",
+          "at": "2026-11-03T22:00:00+00:00"
+        }
+      ]
+    },
+    {
+      "id": "rem-other-timezone",
+      "capability": "reminders",
+      "description": "a half-hour-offset timezone: 6pm local is 12:30 UTC",
+      "setup": {
+        "start": "2026-11-03T10:00:00+00:00",
+        "tz": "Asia/Kolkata"
+      },
+      "steps": [
+        {
+          "kind": "user",
+          "text": "remind me at 6pm to call home",
+          "speech_act": "request",
+          "addressee": "sutra"
+        },
+        {
+          "kind": "advance",
+          "minutes": 151
+        }
+      ],
+      "expect": [
+        {
+          "check": "reminder_set",
+          "at": "2026-11-03T12:30:00+00:00"
+        },
+        {
+          "check": "reminder_fired",
+          "at": "2026-11-03T12:30:00+00:00",
+          "times": 1,
+          "late": false
+        }
+      ]
+    }
+  ]
+}

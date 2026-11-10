@@ -26,6 +26,11 @@ from sutra_orchestrator.offers import OffersCommands
 from .fakes import NOW, Clock
 from .test_offers import UTC, build
 
+
+def _cfg(env: dict):
+    """Hermetic config: never reads a developer's orchestrator/.env, which may hold real settings."""
+    return load_config({"SUTRA_TOKEN": "t", "ANTHROPIC_API_KEY": "k", **env}, dotenv_path=None)
+
 SECRET = "s3cret"
 
 
@@ -308,6 +313,6 @@ async def test_the_dev_signal_command_goes_through_the_log(tmp_path):
 
 
 def test_events_are_off_by_default_and_configurable(tmp_path):
-    assert load_config({}).events_enabled is False
-    cfg = load_config({"SUTRA_EVENTS": "on", "SUTRA_EVENTS_PORT": "9000", "SUTRA_EVENTS_SECRET": "x"})
+    assert _cfg({}).events_enabled is False
+    cfg = _cfg({"SUTRA_EVENTS": "on", "SUTRA_EVENTS_PORT": "9000", "SUTRA_EVENTS_SECRET": "x"})
     assert cfg.events_enabled and cfg.events_port == 9000 and cfg.events_secret == "x"

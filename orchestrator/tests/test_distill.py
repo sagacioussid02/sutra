@@ -18,6 +18,11 @@ from .fakes import NOW, Clock
 from .test_graph import FakeStructured
 
 
+def _cfg(env: dict):
+    """Hermetic config: never reads a developer's orchestrator/.env, which may hold real settings."""
+    return load_config({"SUTRA_TOKEN": "t", "ANTHROPIC_API_KEY": "k", **env}, dotenv_path=None)
+
+
 def make(tmp_path, *, script=None, clock=None, **kw):
     clock = clock or Clock()
     memory = SqliteMemory(tmp_path / "m", now=clock)
@@ -352,8 +357,8 @@ async def test_commands_show_status_pairing_commitments_first_and_every_supporti
 
 
 def test_distillation_is_off_by_default_and_configurable():
-    assert load_config({}).distill_enabled is False
-    cfg = load_config({"SUTRA_DISTILL": "on", "SUTRA_DISTILL_HOURS": "12", "SUTRA_DISTILL_CALLS": "5"})
+    assert _cfg({}).distill_enabled is False
+    cfg = _cfg({"SUTRA_DISTILL": "on", "SUTRA_DISTILL_HOURS": "12", "SUTRA_DISTILL_CALLS": "5"})
     assert cfg.distill_enabled and cfg.distill_hours == 12 and cfg.distill_calls == 5
 
 
