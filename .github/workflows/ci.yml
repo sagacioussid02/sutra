@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gateway:
+    name: Gateway (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.sum
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test ./...
+
+  orchestrator:
+    name: Orchestrator (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: orchestrator/pyproject.toml
+      - run: pip install -e '.[dev]'
+      # Some config tests call load_config({}), which reads orchestrator/.env.
+      # Dummy values keep them hermetic until that's fixed in the tests
+      # (see PR #12). No real key ever reaches CI; nothing here calls a model.
+      - run: printf 'SUTRA_TOKEN=ci-dummy\nANTHROPIC_API_KEY=ci-dummy\n' > .env
+      - run: python -m pytest -q
+
+  deploy-scripts:
+    name: Deploy scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash -n deploy/*.sh
+      - run: shellcheck -x deploy/*.sh

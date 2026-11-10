@@ -145,6 +145,18 @@ have to be computed.
        manifest_url: http://127.0.0.1:PORT/.well-known/sutra-agent.json
        base_url: http://127.0.0.1:PORT
    ```
+   If the project protects its API with a header (finanxe needs
+   `X-Finanxe-Token`, for example), add `auth_header` and `auth_env`:
+   ```yaml
+       auth_header: X-Finanxe-Token
+       auth_env: FINANXE_API_TOKEN
+   ```
+   The gateway sends that header on every tool call, with the value read
+   from the environment at start (`deploy/run-gateway.sh` loads
+   `~/.config/sutra/sutra.env`). The value never goes in the YAML, the
+   manifest or the audit log. The manifest is still fetched without it. If
+   the variable is empty the gateway skips the source instead of calling it
+   unauthenticated.
 3. Run discovery: `go run ./cmd/sutra-discover -sources discovery-sources.yaml`
 4. Review each tool it shows you. Type the tier you actually want — don't
    just accept the hint. `reject` anything that shouldn't be reachable
@@ -155,7 +167,9 @@ have to be computed.
 6. Add the new tool names to the relevant user's `allowed_tools` in
    `tokens.yaml` — this is unchanged from today; `authcfg` still gates
    every call regardless of how a tool got registered.
-7. Restart `cmd/gateway`. Its startup log line
+7. Restart `cmd/gateway` (`launchctl kickstart -k gui/$(id -u)/com.sutra.gateway`
+   if it runs under launchd, see `deploy/README.md`), and add the project's
+   health route to `~/.config/sutra/watch.yaml`. Its startup log line
    (`<source>: registered N discovered tools (M skipped)`) confirms
    what went live.
 

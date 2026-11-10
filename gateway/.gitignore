@@ -10,3 +10,9 @@ discovery-sources.yaml
 *.db-wal
 *.db-shm
 events.yaml
+
+# Built binaries (deploy/install-macos.sh).
+bin/
+
+# sutra-watch config with your real targets.
+watch.yaml

@@ -44,12 +44,21 @@ type Config struct {
 	// HTTPClient overrides the default client (used by tests to point at
 	// an httptest.Server, and to set a shorter timeout).
 	HTTPClient *http.Client
+	// APIToken is finanxe's local API token (finanxe's FINANXE_API_TOKEN or
+	// backend/.finanxe_api_token). finanxe rejects every /api/* call except
+	// /api/health without it. Sent as the X-Finanxe-Token header; never
+	// logged or included in errors.
+	APIToken string
 }
+
+// TokenHeader is the header finanxe reads its API token from.
+const TokenHeader = "X-Finanxe-Token"
 
 // Client calls finanxe's local HTTP API.
 type Client struct {
 	baseURL    string
 	userID     string
+	apiToken   string
 	httpClient *http.Client
 }
 
@@ -66,6 +75,7 @@ func NewClient(cfg Config) *Client {
 	return &Client{
 		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
 		userID:     userID,
+		apiToken:   strings.TrimSpace(cfg.APIToken),
 		httpClient: httpClient,
 	}
 }
@@ -81,6 +91,7 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("finanxe: building %s request: %w", path, err)
 	}
+	c.setToken(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -117,6 +128,7 @@ func (c *Client) postJSON(ctx context.Context, path string, payload map[string]a
 		return nil, fmt.Errorf("finanxe: building %s request: %w", path, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.setToken(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -133,6 +145,13 @@ func (c *Client) postJSON(ctx context.Context, path string, payload map[string]a
 		return nil, fmt.Errorf("finanxe: %s returned %d: %s", path, resp.StatusCode, truncate(body, 300))
 	}
 	return body, nil
+}
+
+// setToken adds finanxe's API token header when one is configured.
+func (c *Client) setToken(req *http.Request) {
+	if c.apiToken != "" {
+		req.Header.Set(TokenHeader, c.apiToken)
+	}
 }
 
 func truncate(b []byte, n int) string {

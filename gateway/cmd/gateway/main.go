@@ -12,9 +12,11 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/siddharthshankar/sutra/gateway/internal/audit"
 	"github.com/siddharthshankar/sutra/gateway/internal/authcfg"
@@ -50,6 +52,7 @@ func main() {
 	// here to "demo_user" means the gateway works against real data out of the
 	// box; override with -finanxe-user-id if finanxe ever gets real multi-user
 	// support and this needs to vary per gateway user.
+	finanxeTokenEnv := flag.String("finanxe-token-env", "FINANXE_API_TOKEN", "environment variable holding finanxe's API token (sent as X-Finanxe-Token; finanxe rejects /api/* calls without it)")
 	finanxeUserID := flag.String("finanxe-user-id", "demo_user", "the finanxe user id every gateway caller maps to (finanxe has no real multi-user support today)")
 	discoveryDBPath := flag.String("discovery-db", "sutra-discovery.db", "path to the discovery approval SQLite database")
 	discoverySourcesPath := flag.String("discovery-sources", "discovery-sources.yaml", "path to the discovery sources config (optional — see discovery-sources.example.yaml)")
@@ -81,9 +84,14 @@ func main() {
 	if err := twin.Register(reg, twinClient); err != nil {
 		log.Fatalf("gateway: registering twin tools: %v", err)
 	}
+	finanxeToken := strings.TrimSpace(os.Getenv(*finanxeTokenEnv))
+	if finanxeToken == "" {
+		log.Printf("gateway: $%s is empty: finanxe tools will fail with 401 until it is set", *finanxeTokenEnv)
+	}
 	finanxeClient := finanxe.NewClient(finanxe.Config{
-		BaseURL: *finanxeBaseURL,
-		UserID:  *finanxeUserID,
+		BaseURL:  *finanxeBaseURL,
+		UserID:   *finanxeUserID,
+		APIToken: finanxeToken,
 	})
 	if err := finanxe.Register(reg, finanxeClient); err != nil {
 		log.Fatalf("gateway: registering finanxe tools: %v", err)
@@ -110,7 +118,7 @@ func main() {
 		Confirm:  confirmStore,
 		Audit:    auditStore,
 	})
-	handler := withEventIntake(gateway.NewHTTPHandler(server, authConfig), *eventsPath, auditStore)
+	handler := withHealth(withEventIntake(gateway.NewHTTPHandler(server, authConfig), *eventsPath, auditStore), len(reg.Callable()))
 
 	log.SetOutput(os.Stderr)
 	log.Printf("sutra gateway listening on http://%s (tools registered: %d)", *addr, len(reg.Callable()))
@@ -142,10 +150,30 @@ func registerDiscoveredTools(reg *registry.Registry, store *discovery.Store, sou
 			continue
 		}
 
-		client := genericadapter.NewClient(genericadapter.Config{BaseURL: src.BaseURL})
+		headers, err := src.AuthHeaders(os.Getenv)
+		if err != nil {
+			// Calling without the credentials the source asked for would only
+			// produce 401s; skip it loudly instead.
+			log.Printf("gateway: discovery: %s: skipping: %v", src.Name, err)
+			continue
+		}
+		client := genericadapter.NewClient(genericadapter.Config{BaseURL: src.BaseURL, Headers: headers})
 		registered, skipped := genericadapter.RegisterApproved(reg, src.Name, client, m.Tools, approvals)
 		log.Printf("gateway: discovery: %s: registered %d discovered tool(s) (%d skipped)", src.Name, registered, skipped)
 	}
+}
+
+// withHealth answers GET /healthz without auth so a local watcher (see
+// cmd/sutra-watch) can tell the gateway is up. It reports liveness and the
+// number of registered tools only — nothing about users, tokens or calls.
+func withHealth(next http.Handler, tools int) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","tools":%d}`+"\n", tools)
+	})
+	mux.Handle("/", next)
+	return mux
 }
 
 // withEventIntake mounts POST /events beside the MCP handler when event

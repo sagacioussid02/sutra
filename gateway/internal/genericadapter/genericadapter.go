@@ -33,12 +33,17 @@ type Config struct {
 	// HTTPClient overrides the default client (used by tests to point at
 	// an httptest.Server).
 	HTTPClient *http.Client
+	// Headers are sent on every call, e.g. a project's API token from
+	// discoverysrc.Source.AuthHeaders. Values are never logged or included
+	// in errors.
+	Headers map[string]string
 }
 
 // Client calls a discovered project's plain HTTP API.
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+	headers    map[string]string
 }
 
 // NewClient builds a Client from cfg.
@@ -47,7 +52,11 @@ func NewClient(cfg Config) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultTimeout}
 	}
-	return &Client{baseURL: strings.TrimRight(cfg.BaseURL, "/"), httpClient: httpClient}
+	headers := make(map[string]string, len(cfg.Headers))
+	for k, v := range cfg.Headers {
+		headers[k] = v
+	}
+	return &Client{baseURL: strings.TrimRight(cfg.BaseURL, "/"), httpClient: httpClient, headers: headers}
 }
 
 // call issues tool.Method to tool.Path, splitting args by each declared
@@ -96,6 +105,9 @@ func (c *Client) call(ctx context.Context, tool manifest.Tool, args map[string]a
 	req, err := http.NewRequestWithContext(ctx, tool.Method, target, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("genericadapter: %s: building request: %w", tool.Name, err)
+	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
 	}
 	if tool.Method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")

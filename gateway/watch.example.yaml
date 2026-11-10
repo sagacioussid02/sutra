@@ -1,0 +1,28 @@
+# sutra-watch targets. deploy/install-macos.sh copies this to
+# ~/.config/sutra/watch.yaml; edit it there. Add a target as each project is
+# onboarded (see the week-by-week plan). The ntfy topic itself comes from
+# $SUTRA_WATCH_NTFY_TOPIC in ~/.config/sutra/sutra.env, never from this file.
+
+ntfy:
+  server: https://ntfy.sh
+  topic_env: SUTRA_WATCH_NTFY_TOPIC
+  # token_env: SUTRA_WATCH_NTFY_TOKEN   # only if the topic needs auth
+
+# Consecutive failed checks before a "down" alert (checks run every 5 min).
+fail_threshold: 2
+timeout: 10s
+
+targets:
+  - name: gateway
+    url: http://127.0.0.1:8765/healthz
+  - name: finanxe
+    url: http://127.0.0.1:8002/api/health
+  # Week 1: SPY desk adapter
+  # - name: spy-desk
+  #   url: http://127.0.0.1:8790/api/health
+  # Week 3: Minions adapter
+  # - name: minions
+  #   url: http://127.0.0.1:8770/api/health
+  # Cloud projects (fill in the stable URL once it exists):
+  # - name: twin
+  #   url: https://<twin api>/health
