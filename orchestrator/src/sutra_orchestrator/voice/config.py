@@ -10,17 +10,18 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 from ..errors import ConfigError
+from ..models import default_model, resolve_model
 
 
 @dataclass(frozen=True)
 class VoiceConfig:
     openai_api_key: str = field(default="", repr=False)
     assistant_name: str = "Sutra"
-    stt_model: str = "gpt-4o-transcribe"
-    tts_model: str = "gpt-4o-mini-tts"
+    stt_model: str = default_model("stt")
+    tts_model: str = default_model("tts")
     tts_voice: str = "coral"
     language: str = ""
-    local_stt_model: str = "base.en"
+    local_stt_model: str = default_model("local_stt")
     local_voice: str = ""
     min_confidence: float = 0.5
     filler_delay: float = 1.0
@@ -89,11 +90,11 @@ def load_voice_config(
     return VoiceConfig(
         openai_api_key=merged.get("OPENAI_API_KEY", ""),
         assistant_name=merged.get("SUTRA_ASSISTANT_NAME") or "Sutra",
-        stt_model=merged.get("SUTRA_STT_MODEL") or "gpt-4o-transcribe",
-        tts_model=merged.get("SUTRA_TTS_MODEL") or "gpt-4o-mini-tts",
+        stt_model=resolve_model("stt", merged),
+        tts_model=resolve_model("tts", merged),
         tts_voice=merged.get("SUTRA_TTS_VOICE") or "coral",
         language=merged.get("SUTRA_LANGUAGE", ""),
-        local_stt_model=merged.get("SUTRA_LOCAL_STT_MODEL") or "base.en",
+        local_stt_model=resolve_model("local_stt", merged),
         local_voice=merged.get("SUTRA_LOCAL_VOICE", ""),
         min_confidence=_float(merged, "SUTRA_MIN_CONFIDENCE", 0.5, 0.0, 1.0),
         filler_delay=_float(merged, "SUTRA_FILLER_DELAY", 1.0, 0.0, 30.0),
