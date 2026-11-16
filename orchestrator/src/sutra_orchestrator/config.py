@@ -11,10 +11,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from dotenv import dotenv_values
 
 from .errors import ConfigError
+from .models import default_model, resolve_model
 
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:8765"
-DEFAULT_MODEL = "claude-sonnet-5-5"
-DEFAULT_CLASSIFIER_MODEL = "claude-haiku-5-5"
+# Kept as names: the eval scripts import them. Their values live in
+# models.py, the single source of truth for every role's model.
+DEFAULT_MODEL = default_model("conversation")
+DEFAULT_CLASSIFIER_MODEL = default_model("classifier")
 
 
 @dataclass(frozen=True)
@@ -30,7 +33,7 @@ class Config:
     max_result_bytes: int = 16_000
     reask_limit: int = 2
     classifier_timeout: float = 8.0
-    extractor_model: str = DEFAULT_CLASSIFIER_MODEL
+    extractor_model: str = default_model("extractor")
     memory_enabled: bool = True
     memory_dir: str = "data"
     record_replies: bool = True
@@ -103,7 +106,7 @@ class Config:
     idle_max_searches: int = 2
     idle_run_tokens: int = 3000
     agents_enabled: bool = True
-    agent_model: str = DEFAULT_CLASSIFIER_MODEL
+    agent_model: str = default_model("agent")
     agent_tools: tuple[str, ...] = ()
     agents_dir: str = "data"
     agent_max_searches: int = 5
@@ -175,13 +178,13 @@ def load_config(
         gateway_url=merged.get("SUTRA_GATEWAY_URL") or DEFAULT_GATEWAY_URL,
         token=merged["SUTRA_TOKEN"],
         api_key=merged["ANTHROPIC_API_KEY"],
-        model=merged.get("SUTRA_MODEL") or DEFAULT_MODEL,
-        classifier_model=merged.get("SUTRA_CLASSIFIER_MODEL") or DEFAULT_CLASSIFIER_MODEL,
+        model=resolve_model("conversation", merged),
+        classifier_model=resolve_model("classifier", merged),
         max_tool_calls=_int(merged, "SUTRA_MAX_TOOL_CALLS", 6),
         history_turns=_int(merged, "SUTRA_HISTORY_TURNS", 20),
         max_result_bytes=_int(merged, "SUTRA_MAX_RESULT_BYTES", 16_000),
         reask_limit=_int(merged, "SUTRA_REASK_LIMIT", 2),
-        extractor_model=merged.get("SUTRA_EXTRACTOR_MODEL") or DEFAULT_CLASSIFIER_MODEL,
+        extractor_model=resolve_model("extractor", merged),
         memory_enabled=_bool(merged, "SUTRA_MEMORY", True),
         memory_dir=merged.get("SUTRA_MEMORY_DIR") or "data",
         record_replies=_bool(merged, "SUTRA_RECORD_REPLIES", True),
@@ -261,7 +264,7 @@ def load_config(
         idle_max_searches=_int(merged, "SUTRA_IDLE_MAX_SEARCHES", 2),
         idle_run_tokens=_int(merged, "SUTRA_IDLE_RUN_TOKENS", 3000),
         agents_enabled=_bool(merged, "SUTRA_AGENTS", True),
-        agent_model=merged.get("SUTRA_AGENT_MODEL") or DEFAULT_CLASSIFIER_MODEL,
+        agent_model=resolve_model("agent", merged),
         agent_tools=tuple(
             t.strip() for t in (merged.get("SUTRA_AGENT_TOOLS") or "").split(",") if t.strip()
         ),

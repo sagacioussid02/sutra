@@ -28,18 +28,24 @@ cp .env.example .env     # then fill it in
 | `SUTRA_GATEWAY_URL` | Default `http://127.0.0.1:8765`. |
 | `SUTRA_MODEL` | The conversational model. Default `claude-sonnet-5-5`. |
 | `SUTRA_CLASSIFIER_MODEL` | Small model that reads yes/no replies. Default `claude-haiku-5-5`. |
+| `SUTRA_EXTRACTOR_MODEL` | Small model that extracts what you tell it about yourself. Default `claude-haiku-5-5`. |
+| `SUTRA_AGENT_MODEL` | Small model the researcher uses. Default `claude-haiku-5-5`. |
 | `SUTRA_MAX_TOOL_CALLS` | Tool calls allowed per turn. Default 6. |
 | `SUTRA_HISTORY_TURNS` | Conversation turns kept in the session. Default 20. |
 | `SUTRA_MAX_RESULT_BYTES` | Tool results larger than this are truncated. Default 16000. |
 | `SUTRA_REASK_LIMIT` | Times an unclear reply to a confirmation is re-asked. Default 2. |
 | `SUTRA_MEMORY` | `on` (default) or `off`. Off runs with no memory at all. |
 | `SUTRA_MEMORY_DIR` | Where the memory databases live. Default `orchestrator/data`. |
-| `SUTRA_EXTRACTOR_MODEL` | Small model that extracts what you tell it about yourself. Default `claude-haiku-5-5`. |
 | `SUTRA_RECORD_REPLIES` | `on` (default) or `off`. Whether the assistant's reply text is kept in the conversation log. |
 | `SUTRA_EPISODE_HOT_DAYS` | Conversations older than this are moved to the archive. Default 30. |
 
 Real environment variables win over `.env`. `.env` is gitignored. Neither the
 token nor the API key is ever logged or put in model context.
+
+All seven model roles and their defaults live in one place,
+`src/sutra_orchestrator/models.py`: conversation, classifier, extractor,
+agent, and the voice roles (stt, tts, local_stt). Set a role's
+`SUTRA_*_MODEL` variable to flip that job's model without touching code.
 
 ## Run
 

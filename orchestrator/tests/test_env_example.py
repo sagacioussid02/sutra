@@ -1,7 +1,8 @@
 """The .env.example documents every variable the config loaders read.
 
-When a new SUTRA_* setting is added to config.py or voice/config.py, add it
-here too — with the default value the code uses — or this test fails.
+When a new SUTRA_* setting is added to config.py, voice/config.py, or the
+model registry (models.py), add it here too — with the default value the
+code uses — or this test fails.
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ EXAMPLE = Path(__file__).parent.parent / ".env.example"
 CONFIG_FILES = [
     Path(__file__).parent.parent / "src" / "sutra_orchestrator" / "config.py",
     Path(__file__).parent.parent / "src" / "sutra_orchestrator" / "voice" / "config.py",
+    # The registry holds the SUTRA_*_MODEL names the loaders resolve.
+    Path(__file__).parent.parent / "src" / "sutra_orchestrator" / "models.py",
 ]
 
 _NAME_RE = re.compile(r"^#?\s*([A-Z][A-Z0-9_]*)\s*=")

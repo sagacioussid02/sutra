@@ -6,6 +6,7 @@ import asyncio
 import math
 from typing import Any
 
+from ..models import default_model
 from .types import Transcript, VoiceError
 
 DEFAULT_TTS_INSTRUCTIONS = (
@@ -53,7 +54,7 @@ class OpenAITranscriber:
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4o-transcribe",
+        model: str = default_model("stt"),
         *,
         prompt: str = "",
         language: str = "",
@@ -92,7 +93,7 @@ class OpenAISpeaker:
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4o-mini-tts",
+        model: str = default_model("tts"),
         voice: str = "coral",
         *,
         instructions: str = DEFAULT_TTS_INSTRUCTIONS,

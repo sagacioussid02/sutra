@@ -8,6 +8,7 @@ import math
 import wave
 
 from ..i18n import DEVANAGARI
+from ..models import default_model
 from .types import Transcript, VoiceError
 
 
@@ -43,7 +44,7 @@ def _wav_to_float32(wav: bytes):
 
 
 class FasterWhisperTranscriber:
-    def __init__(self, model_size: str = "base.en", language: str | None = None) -> None:
+    def __init__(self, model_size: str = default_model("local_stt"), language: str | None = None) -> None:
         self._size = model_size
         self._language = language or None  # None: detect it (needs a multilingual model, not base.en)
         self._model = None
