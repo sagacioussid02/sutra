@@ -275,7 +275,11 @@ async def test_flipped_voice_models_are_the_ones_sent_to_openai():
 
 
 def test_engine_defaults_come_from_the_registry():
-    assert OpenAITranscriber("k")._model == "gpt-4o-transcribe"
-    assert OpenAISpeaker("k")._model == "gpt-4o-mini-tts"
+    # A stand-in client: this test checks model defaults, and CI installs
+    # only the dev extra — building a real client would import the voice
+    # extra's openai package, which CI does not have.
+    dummy = SimpleNamespace()
+    assert OpenAITranscriber("k", client=dummy)._model == "gpt-4o-transcribe"
+    assert OpenAISpeaker("k", client=dummy)._model == "gpt-4o-mini-tts"
     assert FasterWhisperTranscriber()._size == "base.en"
     assert REGISTRY["local_stt"].default == "base.en"
